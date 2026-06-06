@@ -16,9 +16,10 @@ enum StatusItemFormatter {
         return String(Int(remaining.rounded()))
     }
 
-    /// Time until `window` resets, as whole hours ("8h") when more than an hour
-    /// away, otherwise whole minutes ("13m"). Both round down. Returns "--" when
-    /// no reset time is known and "0m" once the window is due to reset.
+    /// Time until `window` resets, as whole days ("5d") when a day or more away,
+    /// whole hours ("8h") when more than an hour away, otherwise whole minutes
+    /// ("13m"). All round down. Returns "--" when no reset time is known and "0m"
+    /// once the window is due to reset.
     static func compactResetValue(for window: UsageWindow, now: Date = .now) -> String {
         guard let resetsAt = window.resetsAt else {
             return "--"
@@ -26,6 +27,9 @@ enum StatusItemFormatter {
         let seconds = resetsAt.timeIntervalSince(now)
         guard seconds > 0 else {
             return "0m"
+        }
+        if seconds >= 86400 {
+            return "\(Int(seconds / 86400))d"
         }
         if seconds > 3600 {
             return "\(Int(seconds / 3600))h"

@@ -136,6 +136,10 @@ struct LocalizationAndFormattingTests {
             makeWindow(.fiveHour, resetsAt: now.addingTimeInterval(seconds))
         }
 
+        #expect(StatusItemFormatter.compactResetValue(for: reset(130 * 3600), now: now) == "5d")
+        #expect(StatusItemFormatter.compactResetValue(for: reset(48 * 3600), now: now) == "2d")
+        #expect(StatusItemFormatter.compactResetValue(for: reset(86400), now: now) == "1d")
+        #expect(StatusItemFormatter.compactResetValue(for: reset(86399), now: now) == "23h")
         #expect(StatusItemFormatter.compactResetValue(for: reset(8 * 3600), now: now) == "8h")
         #expect(StatusItemFormatter.compactResetValue(for: reset(3601), now: now) == "1h")
         #expect(StatusItemFormatter.compactResetValue(for: reset(3600), now: now) == "60m")
