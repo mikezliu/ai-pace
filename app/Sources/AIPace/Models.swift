@@ -77,6 +77,7 @@ struct AgentStatus: Equatable {
 enum MenuBarDisplayMode: String, CaseIterable, Identifiable {
     case usage
     case remaining
+    case remainingWithReset
     case insight
     case usageAndInsight
     case remainingAndInsight
@@ -123,7 +124,7 @@ enum AutoRefreshInterval: Int, CaseIterable, Identifiable {
         }
     }
 
-    static let defaultValue: AutoRefreshInterval = .fiveMinutes
+    static let defaultValue: AutoRefreshInterval = .oneMinute
 }
 
 enum NotificationSoundOption: String, CaseIterable, Identifiable {
@@ -200,6 +201,15 @@ struct ProviderSnapshot {
             weekly: .placeholder(.weekly),
             detail: nil
         )
+    }
+
+    /// Lowest "usage remaining" (100 − used) across the 5h and weekly windows
+    /// that have data, or nil when neither has a usage value yet. Drives the
+    /// Dynamic theme's severity.
+    var lowestRemaining: Double? {
+        [fiveHour, weekly]
+            .compactMap { window in window.usedPercentage.map { max(0, 100 - $0) } }
+            .min()
     }
 }
 

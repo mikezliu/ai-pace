@@ -253,6 +253,31 @@ struct UsageStoreTests {
 
     @Test
     @MainActor
+    func autoRefreshIntervalUsesDefaultWhenUnsetButKeepsExplicitManual() {
+        let suiteName = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        func makeStore() -> UsageStore {
+            UsageStore(
+                claudeProbe: ProbeStub(queue: ProbeQueue([makeSnapshot(.claude)])),
+                codexProbe: ProbeStub(queue: ProbeQueue([makeSnapshot(.codex)])),
+                notificationManager: NotificationManagerSpy(),
+                userDefaults: defaults,
+                startRefreshLoop: false
+            )
+        }
+
+        // No stored key -> the default (1 minute), not Manual (raw value 0).
+        #expect(makeStore().autoRefreshInterval == .oneMinute)
+
+        // An explicit Manual selection (stored 0) is preserved, not treated as unset.
+        defaults.set(AutoRefreshInterval.manual.rawValue, forKey: "autoRefreshInterval")
+        #expect(makeStore().autoRefreshInterval == .manual)
+    }
+
+    @Test
+    @MainActor
     func manualRefreshRunsInitialRefreshOnly() async {
         let suiteName = UUID().uuidString
         let defaults = UserDefaults(suiteName: suiteName)!

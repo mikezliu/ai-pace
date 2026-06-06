@@ -660,6 +660,16 @@ struct Loc {
             case .korean: return "남은 %"
             case .chineseSimplified: return "剩余 %"
             }
+        case .remainingWithReset:
+            switch lang {
+            case .english: return "Remaining % + reset"
+            case .spanish: return "Restante % + reinicio"
+            case .french: return "Restant % + réinit."
+            case .german: return "Verbleibend % + Reset"
+            case .japanese: return "残り % + リセット"
+            case .korean: return "남은 % + 리셋"
+            case .chineseSimplified: return "剩余 % + 重置"
+            }
         case .insight:
             switch lang {
             case .english: return "Insight +/-%"
@@ -789,6 +799,37 @@ struct Loc {
             case .japanese: return "未サインイン"
             case .korean: return "로그인되지 않음"
             case .chineseSimplified: return "未登录"
+            }
+        case .error:
+            switch lang {
+            case .english: return "Error"
+            case .spanish: return "Error"
+            case .french: return "Erreur"
+            case .german: return "Fehler"
+            case .japanese: return "エラー"
+            case .korean: return "오류"
+            case .chineseSimplified: return "错误"
+            }
+        }
+    }
+
+    /// Terse, actionable label shown in the menu bar when a provider is
+    /// unavailable, so a fixable auth problem doesn't read as a broken app.
+    /// Returns `nil` for states that should stay hidden — e.g. a provider whose
+    /// CLI isn't installed, which usually just means the user doesn't use it.
+    func menuBarStatusLabel(_ status: AgentStatus) -> String? {
+        switch status.availability {
+        case .loading, .available, .notInstalled:
+            return nil
+        case .missingAuth, .accessDenied, .sessionExpired, .notLoggedIn:
+            switch lang {
+            case .english: return "Login"
+            case .spanish: return "Entrar"
+            case .french: return "Connexion"
+            case .german: return "Anmelden"
+            case .japanese: return "ログイン"
+            case .korean: return "로그인"
+            case .chineseSimplified: return "登录"
             }
         case .error:
             switch lang {

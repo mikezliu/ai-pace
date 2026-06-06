@@ -11,7 +11,7 @@ struct MenuContentView: View {
     @AppStorage(AppTheme.customClaudeAccentDefaultsKey) private var customClaudeAccentHex = ""
     @AppStorage(AppTheme.customCodexAccentDefaultsKey) private var customCodexAccentHex = ""
     @AppStorage("appLanguage") private var langID = AppLanguage.english.rawValue
-    @AppStorage("menuBarDisplayMode") private var menuBarDisplayModeID = MenuBarDisplayMode.usage.rawValue
+    @AppStorage("menuBarDisplayMode") private var menuBarDisplayModeID = MenuBarDisplayMode.remainingWithReset.rawValue
 
     private var theme: AppTheme {
         AppTheme.resolvedTheme(
@@ -393,7 +393,7 @@ struct SettingsView: View {
     @AppStorage(ProviderDisplayName.customClaudeNameDefaultsKey) private var customClaudeName = ""
     @AppStorage(ProviderDisplayName.customCodexNameDefaultsKey) private var customCodexName = ""
     @AppStorage("appLanguage") private var langID = AppLanguage.english.rawValue
-    @AppStorage("menuBarDisplayMode") private var menuBarDisplayModeID = MenuBarDisplayMode.usage.rawValue
+    @AppStorage("menuBarDisplayMode") private var menuBarDisplayModeID = MenuBarDisplayMode.remainingWithReset.rawValue
     @AppStorage("popoverDisplayMode") private var popoverDisplayModeID = PopoverDisplayMode.usage.rawValue
 
     private var lang: AppLanguage { AppLanguage(rawValue: langID) ?? .english }

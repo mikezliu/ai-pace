@@ -16,7 +16,7 @@ AIPace is a lightweight menu bar app that shows your current `5h` and `weekly` u
 - 📊 Claude and Codex `5h` and `weekly` usage in one place
 - 🔐 Uses your existing local CLI login
 - 🔔 Optional notifications when a usage window refreshes
-- ⏱️ Refreshes every 5 minutes by default
+- ⏱️ Refreshes every minute by default (configurable, or Manual)
 - 🎨 Custom Claude and Codex colors
 - 🧠 Pacing insights for the current usage window
 

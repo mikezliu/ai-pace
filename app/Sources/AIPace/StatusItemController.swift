@@ -220,18 +220,27 @@ final class StatusItemController: NSObject, NSMenuDelegate, NSPopoverDelegate {
             themeID: UserDefaults.standard.string(forKey: "selectedTheme") ?? AppTheme.defaultTheme.id
         )
         let displayMode = MenuBarDisplayMode(
-            rawValue: UserDefaults.standard.string(forKey: "menuBarDisplayMode") ?? MenuBarDisplayMode.usage.rawValue
-        ) ?? .usage
+            rawValue: UserDefaults.standard.string(forKey: "menuBarDisplayMode") ?? MenuBarDisplayMode.remainingWithReset.rawValue
+        ) ?? .remainingWithReset
+        let loc = Loc(
+            lang: AppLanguage(rawValue: UserDefaults.standard.string(forKey: "appLanguage") ?? AppLanguage.english.rawValue) ?? .english
+        )
         let claudeStatus = store.agentStatus(for: .claude)
         let codexStatus = store.agentStatus(for: .codex)
         let claudeName = ProviderDisplayName.displayName(for: .claude)
         let codexName = ProviderDisplayName.displayName(for: .codex)
-        let claudeText = claudeStatus.availability.showsInPopover
-            ? StatusItemFormatter.text(prefix: claudeName, snapshot: store.claude, mode: displayMode)
-            : nil
-        let codexText = codexStatus.availability.showsInPopover
-            ? StatusItemFormatter.text(prefix: codexName, snapshot: store.codex, mode: displayMode)
-            : nil
+        let claudeText = StatusItemFormatter.menuBarText(
+            prefix: claudeName, snapshot: store.claude, status: claudeStatus, mode: displayMode, loc: loc
+        )
+        let codexText = StatusItemFormatter.menuBarText(
+            prefix: codexName, snapshot: store.codex, status: codexStatus, mode: displayMode, loc: loc
+        )
+
+        let isDark = (statusItem?.button?.effectiveAppearance ?? NSApp.effectiveAppearance)
+            .bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let claudeStyle = pillStyle(theme: resolvedTheme, provider: .claude, snapshot: store.claude, isDark: isDark)
+        let codexStyle = pillStyle(theme: resolvedTheme, provider: .codex, snapshot: store.codex, isDark: isDark)
+        let fallbackStyle = StatusPillStyle(background: Color(red: 0.36, green: 0.38, blue: 0.42), foreground: .white)
 
         let usesFallbackLabel = StatusItemLabelView.resolvedFallbackText(claudeText: claudeText, codexText: codexText) != nil
         if usesFallbackLabel, !isUsingFallbackLabel {
@@ -242,8 +251,23 @@ final class StatusItemController: NSObject, NSMenuDelegate, NSPopoverDelegate {
         return StatusItemLabelView(
             claudeText: claudeText,
             codexText: codexText,
-            theme: resolvedTheme
+            claudeStyle: claudeStyle,
+            codexStyle: codexStyle,
+            fallbackStyle: fallbackStyle
         )
+    }
+
+    private func pillStyle(
+        theme: AppTheme,
+        provider: ProviderKind,
+        snapshot: ProviderSnapshot,
+        isDark: Bool
+    ) -> StatusPillStyle {
+        if theme.isDynamic {
+            return DynamicTheme.pillStyle(forRemaining: snapshot.lowestRemaining, isDark: isDark)
+        }
+        let accent = provider == .claude ? theme.claudeAccent : theme.codexAccent
+        return StatusPillStyle(background: accent, foreground: .white)
     }
 
     private func applyTextFallback(to button: NSStatusBarButton) {

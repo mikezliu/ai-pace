@@ -6,6 +6,16 @@ struct AppTheme: Identifiable {
     let name: String
     let claudeAccent: Color
     let codexAccent: Color
+    /// When true, the menu bar pill color is derived from live usage instead of
+    /// the fixed accents above (which are then only a neutral popover fallback).
+    var isDynamic: Bool = false
+
+    static let dynamic = AppTheme(
+        id: "dynamic", name: "Dynamic",
+        claudeAccent: Color(red: 0.55, green: 0.50, blue: 0.45),
+        codexAccent: Color(red: 0.40, green: 0.48, blue: 0.55),
+        isDynamic: true
+    )
 
     static let sunset = AppTheme(
         id: "sunset", name: "Sunset",
@@ -68,11 +78,12 @@ struct AppTheme: Identifiable {
     )
 
     static let all: [AppTheme] = [
+        .dynamic,
         .sunset, .neon, .ocean, .forest, .berry,
         .citrus, .arctic, .volcano, .aurora, .mono,
     ]
 
-    static let defaultTheme = sunset
+    static let defaultTheme = dynamic
     static let customClaudeAccentDefaultsKey = "customClaudeAccentHex"
     static let customCodexAccentDefaultsKey = "customCodexAccentHex"
 
@@ -85,7 +96,8 @@ struct AppTheme: Identifiable {
             id: id,
             name: name,
             claudeAccent: claudeAccent ?? self.claudeAccent,
-            codexAccent: codexAccent ?? self.codexAccent
+            codexAccent: codexAccent ?? self.codexAccent,
+            isDynamic: isDynamic
         )
     }
 
@@ -106,6 +118,73 @@ struct AppTheme: Identifiable {
             claudeAccent: AppColorHex.color(from: customClaudeAccentHex),
             codexAccent: AppColorHex.color(from: customCodexAccentHex)
         )
+    }
+}
+
+/// Background + foreground colors for a single menu bar pill.
+struct StatusPillStyle: Equatable {
+    let background: Color
+    let foreground: Color
+}
+
+/// Severity buckets for the Dynamic theme, based on how much usage remains.
+enum DynamicThemeLevel: Equatable {
+    case normal    // >= 30% remaining
+    case caution   // < 30%
+    case warning   // < 20%
+    case critical  // < 10%
+
+    static func level(forRemaining remaining: Double?) -> DynamicThemeLevel {
+        guard let remaining else {
+            return .normal
+        }
+        if remaining < 10 {
+            return .critical
+        }
+        if remaining < 20 {
+            return .warning
+        }
+        if remaining < 30 {
+            return .caution
+        }
+        return .normal
+    }
+}
+
+/// Computes the menu bar pill style for the Dynamic theme. Warning levels use
+/// vivid backgrounds with high-contrast text; the healthy state uses the system
+/// window/label colors so it blends into the menu bar like ordinary text.
+enum DynamicTheme {
+    static let cautionBackground = Color(red: 0.98, green: 0.78, blue: 0.10)  // yellow
+    static let warningBackground = Color(red: 0.95, green: 0.50, blue: 0.05)  // orange
+    static let criticalBackground = Color(red: 0.82, green: 0.10, blue: 0.10) // red
+
+    static func pillStyle(forRemaining remaining: Double?, isDark: Bool) -> StatusPillStyle {
+        switch DynamicThemeLevel.level(forRemaining: remaining) {
+        case .critical:
+            return StatusPillStyle(background: criticalBackground, foreground: .white)
+        case .warning:
+            return StatusPillStyle(background: warningBackground, foreground: .black)
+        case .caution:
+            return StatusPillStyle(background: cautionBackground, foreground: .black)
+        case .normal:
+            return StatusPillStyle(
+                background: systemColor(.windowBackgroundColor, isDark: isDark),
+                foreground: systemColor(.labelColor, isDark: isDark)
+            )
+        }
+    }
+
+    /// Resolves a dynamic system color to a concrete sRGB color for the given
+    /// appearance, so it renders correctly in the status item image (which is
+    /// drawn outside the normal appearance context).
+    private static func systemColor(_ nsColor: NSColor, isDark: Bool) -> Color {
+        let appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
+        var resolved = nsColor
+        appearance?.performAsCurrentDrawingAppearance {
+            resolved = nsColor.usingColorSpace(.sRGB) ?? nsColor
+        }
+        return Color(nsColor: resolved)
     }
 }
 

@@ -46,8 +46,11 @@ final class UsageStore: ObservableObject {
         self.launchAtStartupManager = launchAtStartupManager
         self.userDefaults = userDefaults
         refreshNotificationKeys = Set(userDefaults.stringArray(forKey: refreshNotificationDefaultsKey) ?? [])
-        let storedInterval = userDefaults.integer(forKey: autoRefreshIntervalDefaultsKey)
-        autoRefreshInterval = AutoRefreshInterval(rawValue: storedInterval) ?? .defaultValue
+        // Distinguish an absent key (use the default) from an explicit stored 0,
+        // which is a deliberate `.manual` choice. `integer(forKey:)` can't tell
+        // them apart because it returns 0 for a missing key.
+        let storedInterval = userDefaults.object(forKey: autoRefreshIntervalDefaultsKey) as? Int
+        autoRefreshInterval = storedInterval.flatMap(AutoRefreshInterval.init(rawValue:)) ?? .defaultValue
         notificationSound = NotificationSoundOption(
             rawValue: userDefaults.string(forKey: notificationSoundDefaultsKey) ?? NotificationSoundOption.systemDefault.rawValue
         ) ?? .systemDefault

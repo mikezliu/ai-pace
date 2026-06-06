@@ -5,7 +5,9 @@ struct StatusItemLabelView: View {
 
     let claudeText: String?
     let codexText: String?
-    let theme: AppTheme
+    let claudeStyle: StatusPillStyle
+    let codexStyle: StatusPillStyle
+    let fallbackStyle: StatusPillStyle
 
     var body: some View {
         let visibleClaudeText = Self.visibleText(claudeText)
@@ -13,16 +15,16 @@ struct StatusItemLabelView: View {
 
         HStack(spacing: 6) {
             if let claudeText = visibleClaudeText {
-                pill(text: claudeText, color: theme.claudeAccent)
+                pill(text: claudeText, style: claudeStyle)
             }
             if let codexText = visibleCodexText {
-                pill(text: codexText, color: theme.codexAccent)
+                pill(text: codexText, style: codexStyle)
             }
             if let fallbackText = Self.resolvedFallbackText(
                 claudeText: visibleClaudeText,
                 codexText: visibleCodexText
             ) {
-                pill(text: fallbackText, color: Color(red: 0.36, green: 0.38, blue: 0.42))
+                pill(text: fallbackText, style: fallbackStyle)
             }
         }
         .padding(.horizontal, 4)
@@ -45,15 +47,15 @@ struct StatusItemLabelView: View {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    private func pill(text: String, color: Color) -> some View {
+    private func pill(text: String, style: StatusPillStyle) -> some View {
         Text(text)
             .font(.system(size: 11, weight: .semibold, design: .monospaced))
-            .foregroundStyle(.white)
+            .foregroundStyle(style.foreground)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(
                 Capsule(style: .continuous)
-                    .fill(color)
+                    .fill(style.background)
             )
     }
 }

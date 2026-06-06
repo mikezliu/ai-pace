@@ -6,6 +6,18 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 
 ## [Unreleased]
 
+### Added
+- "Dynamic" menu bar theme that colors each provider's pill by how much usage is left: neutral (system colors) when healthy, then yellow below 30%, orange below 20%, and red below 10% remaining. It is now the default theme.
+- Menu bar "reset time" segment (e.g. `88/23/8h`) showing time until the next window resets, with a matching "Remaining % + reset" display mode that is now the default.
+- Menu bar now shows a localized "Login" (or "Error") label when a provider is signed out or failing, instead of silently hiding the pill.
+- `Makefile` with common developer commands (build, run, test, dmg, icon, clean).
+
+### Changed
+- Default auto-refresh interval is now 1 minute.
+
+### Fixed
+- Auto-refresh default was silently ignored on a fresh install: an absent setting read as `0`, which is the `.manual` value, so the documented default never applied. An absent setting now resolves to the default while an explicit Manual choice is preserved.
+
 ## [1.1.2] - 2026-04-25
 
 ### Added
