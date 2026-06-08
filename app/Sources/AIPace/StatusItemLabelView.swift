@@ -13,7 +13,7 @@ struct StatusItemLabelView: View {
         let visibleClaudeText = Self.visibleText(claudeText)
         let visibleCodexText = Self.visibleText(codexText)
 
-        HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 1) {
             if let claudeText = visibleClaudeText {
                 pill(text: claudeText, style: claudeStyle)
             }
@@ -49,10 +49,11 @@ struct StatusItemLabelView: View {
 
     private func pill(text: String, style: StatusPillStyle) -> some View {
         Text(text)
-            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+            .font(.system(size: 9, weight: .semibold, design: .monospaced))
             .foregroundStyle(style.foreground)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 0.5)
             .background(
                 Capsule(style: .continuous)
                     .fill(style.background)
