@@ -26,6 +26,10 @@ struct LocalizationAndFormattingTests {
         #expect(english.insightMessage(delta: 9) == "9% to spare")
         #expect(english.statusTitle(status) == "Not installed")
         #expect(english.statusInstruction(status) == "Install the Codex CLI and make sure `codex` is on PATH.")
+
+        let rateLimitMessage = "Claude usage endpoint returned HTTP 429. Retry after 2m."
+        let rateLimited = AgentStatus(provider: .claude, availability: .rateLimited, message: rateLimitMessage)
+        #expect(english.statusInstruction(rateLimited) == rateLimitMessage)
     }
 
     @Test
@@ -105,6 +109,22 @@ struct LocalizationAndFormattingTests {
             )
         }
 
+        let rateLimited = AgentStatus(provider: .claude, availability: .rateLimited, message: "HTTP 429")
+        #expect(
+            StatusItemFormatter.menuBarText(prefix: "Cl", snapshot: snapshot, status: rateLimited, mode: .remaining, loc: loc)
+                == "Cl Wait"
+        )
+
+        let rateLimitedWithRetry = AgentStatus(
+            provider: .claude,
+            availability: .rateLimited,
+            message: "Claude usage endpoint returned HTTP 429. Retry after 40m."
+        )
+        #expect(
+            StatusItemFormatter.menuBarText(prefix: "Cl", snapshot: snapshot, status: rateLimitedWithRetry, mode: .remaining, loc: loc)
+                == "Cl 0/40m"
+        )
+
         // A generic error is surfaced too.
         let error = AgentStatus(provider: .claude, availability: .error("boom"), message: "boom")
         #expect(
@@ -125,6 +145,7 @@ struct LocalizationAndFormattingTests {
         #expect(Loc(lang: .english).menuBarStatusLabel(status) == "Login")
         #expect(Loc(lang: .japanese).menuBarStatusLabel(status) == "ログイン")
         #expect(Loc(lang: .german).menuBarStatusLabel(status) == "Anmelden")
+        #expect(Loc(lang: .english).menuBarStatusLabel(AgentStatus(provider: .claude, availability: .rateLimited, message: nil)) == "Wait")
         #expect(Loc(lang: .english).menuBarStatusLabel(AgentStatus(provider: .codex, availability: .notInstalled, message: nil)) == nil)
         #expect(Loc(lang: .english).menuBarStatusLabel(AgentStatus(provider: .claude, availability: .available, message: nil)) == nil)
     }

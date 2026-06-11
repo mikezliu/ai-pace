@@ -67,6 +67,7 @@ struct ModelsTests {
     func agentAvailabilityPopoverVisibilityMatchesExpectedStates() {
         #expect(AgentAvailability.loading.showsInPopover)
         #expect(AgentAvailability.available.showsInPopover)
+        #expect(!AgentAvailability.rateLimited.showsInPopover)
         #expect(!AgentAvailability.notInstalled.showsInPopover)
         #expect(!AgentAvailability.error("boom").showsInPopover)
     }

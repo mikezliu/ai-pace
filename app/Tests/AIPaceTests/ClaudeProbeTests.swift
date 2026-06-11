@@ -37,6 +37,7 @@ struct ClaudeProbeTests {
         let loader = ClaudeCredentialLoader(
             homeDirectory: homeDirectory,
             environment: [:],
+            setupTokenStore: .empty,
             keychainLoadOverride: .success(nil)
         )
         let resolver = ClaudeAccountInfoResolver(configURL: configURL)
@@ -76,6 +77,7 @@ struct ClaudeProbeTests {
         let loader = ClaudeCredentialLoader(
             homeDirectory: homeDirectory,
             environment: [:],
+            setupTokenStore: .empty,
             keychainLoadOverride: .success(nil)
         )
         let apiClient = ClaudeAPIClient(
@@ -93,8 +95,88 @@ struct ClaudeProbeTests {
             apiClient: apiClient
         ).fetch()
 
-        #expect(snapshot.fiveHour.message == "Claude is logged in, but credentials could not be read from file, Keychain, or environment.")
+        #expect(snapshot.fiveHour.message == "Claude is logged in, but credentials could not be read from file, AIPace setup-token, environment, or Keychain.")
         #expect(snapshot.weekly.message == snapshot.fiveHour.message)
+    }
+
+    @Test
+    func fetchUsesSetupTokenWithoutRefresh() async throws {
+        let homeDirectory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: homeDirectory) }
+
+        let store = ClaudeSetupTokenStore(
+            loadToken: { .success("setup-token") },
+            saveToken: { _ in .success(()) },
+            deleteToken: { .success(()) }
+        )
+        let loader = ClaudeCredentialLoader(
+            homeDirectory: homeDirectory,
+            environment: [:],
+            setupTokenStore: store,
+            keychainLoadOverride: .success(nil)
+        )
+        let apiClient = ClaudeAPIClient(
+            fetchStatus: { ClaudeAuthStatus(loggedIn: nil) },
+            refreshToken: { credentials, _ in
+                Issue.record("refreshToken should not be called for setup-token credentials")
+                return credentials
+            },
+            fetchUsage: { token in
+                #expect(token == "setup-token")
+                return ClaudeUsageResponse(
+                    fiveHour: ClaudeQuotaData(utilization: 12, resetsAt: nil),
+                    sevenDay: ClaudeQuotaData(utilization: 34, resetsAt: nil)
+                )
+            }
+        )
+
+        let snapshot = await ClaudeProbe(
+            credentialLoader: loader,
+            accountInfoResolver: ClaudeAccountInfoResolver(configURL: homeDirectory.appendingPathComponent(".missing")),
+            apiClient: apiClient
+        ).fetch()
+
+        #expect(snapshot.fiveHour.usedPercentage == 12)
+        #expect(snapshot.weekly.usedPercentage == 34)
+    }
+
+    @Test
+    func rateLimitInfoParsesRetryAfterSecondsAndResetHeaders() {
+        let now = ISO8601DateFormatter().date(from: "2026-06-11T04:00:00Z")!
+        let headers: [AnyHashable: Any] = [
+            "Retry-After": "90",
+            "anthropic-ratelimit-requests-reset": "2026-06-11T04:03:00Z",
+            "anthropic-ratelimit-tokens-reset": "2026-06-11T05:00:00Z",
+            "anthropic-ratelimit-input-tokens-reset": "2026-06-11T04:00:30Z",
+            "anthropic-ratelimit-output-tokens-reset": "2026-06-13T04:00:00Z",
+        ]
+
+        let message = ClaudeRateLimitInfo(headers: headers, now: now).message(now: now)
+
+        #expect(
+            message == "Claude usage endpoint returned HTTP 429. Retry after 2m. Requests reset in 3m. Tokens reset in 1h. Input tokens reset in 30s. Output tokens reset in 2d."
+        )
+    }
+
+    @Test
+    func rateLimitInfoParsesRetryAfterHTTPDate() {
+        let now = ISO8601DateFormatter().date(from: "2026-06-11T04:00:00Z")!
+        let headers: [AnyHashable: Any] = [
+            "retry-after": "Thu, 11 Jun 2026 04:05:00 GMT",
+        ]
+
+        let message = ClaudeRateLimitInfo(headers: headers, now: now).message(now: now)
+
+        #expect(message == "Claude usage endpoint returned HTTP 429. Retry after 5m.")
+    }
+
+    @Test
+    func rateLimitInfoFallsBackWhenHeadersAreMissing() {
+        let now = ISO8601DateFormatter().date(from: "2026-06-11T04:00:00Z")!
+
+        let message = ClaudeRateLimitInfo(headers: [:], now: now).message(now: now)
+
+        #expect(message == "Claude usage endpoint returned HTTP 429.")
     }
 
     @Test
@@ -134,6 +216,7 @@ struct ClaudeProbeTests {
         let loader = ClaudeCredentialLoader(
             homeDirectory: homeDirectory,
             environment: [:],
+            setupTokenStore: .empty,
             keychainLoadOverride: .success(nil)
         )
         let apiClient = ClaudeAPIClient(

@@ -70,6 +70,10 @@ enum StatusItemFormatter {
         if status.availability.showsInPopover {
             return text(prefix: prefix, snapshot: snapshot, mode: mode, now: now)
         }
+        if case .rateLimited = status.availability,
+           let retryLabel = rateLimitRetryLabel(from: status.message) {
+            return "\(prefix) 0/\(retryLabel)"
+        }
         guard let label = loc.menuBarStatusLabel(status) else {
             return nil
         }
@@ -97,5 +101,25 @@ enum StatusItemFormatter {
             let insight = WeeklyPacing.formattedDelta(for: snapshot.weekly) ?? "--"
             return "\(prefix) \(remaining) \(insight)"
         }
+    }
+
+    private static func rateLimitRetryLabel(from message: String?) -> String? {
+        guard let message else {
+            return nil
+        }
+
+        let pattern = #"(?i)\bretry after\s+([0-9]+\s*[smhd])\b"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return nil
+        }
+
+        let range = NSRange(message.startIndex..<message.endIndex, in: message)
+        guard let match = regex.firstMatch(in: message, range: range),
+              let labelRange = Range(match.range(at: 1), in: message) else {
+            return nil
+        }
+
+        let label = message[labelRange].replacingOccurrences(of: " ", with: "").lowercased()
+        return label.isEmpty ? nil : label
     }
 }

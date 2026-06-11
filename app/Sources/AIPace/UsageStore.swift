@@ -28,6 +28,7 @@ final class UsageStore: ObservableObject {
     private let userDefaults: UserDefaults
     private var refreshTask: Task<Void, Never>?
     private var preservedFailureCounts: [ProviderKind: Int] = [:]
+    @Published private var transientStatuses: [ProviderKind: AgentStatus] = [:]
     private let refreshNotificationDefaultsKey = "refreshNotificationKeys"
     private let autoRefreshIntervalDefaultsKey = "autoRefreshInterval"
     private let notificationSoundDefaultsKey = "notificationSound"
@@ -72,7 +73,12 @@ final class UsageStore: ObservableObject {
     }
 
     var visibleSnapshots: [ProviderSnapshot] {
-        [claude, codex].filter { agentStatus(for: $0.provider).availability.showsInPopover }
+        [claude, codex].filter { snapshot in
+            if snapshot.fiveHour.usedPercentage != nil || snapshot.weekly.usedPercentage != nil {
+                return true
+            }
+            return agentStatus(for: snapshot.provider).availability.showsInPopover
+        }
     }
 
     var hasVisibleSnapshots: Bool {
@@ -125,6 +131,11 @@ final class UsageStore: ObservableObject {
         notificationManager.preview(sound: notificationSound)
     }
 
+    func noteClaudeCredentialsChanged() {
+        preservedFailureCounts[.claude] = 0
+        transientStatuses[.claude] = nil
+    }
+
     var launchAtStartupEnabled: Bool {
         switch launchAtStartupState {
         case .enabled, .requiresApproval:
@@ -169,6 +180,10 @@ final class UsageStore: ObservableObject {
     }
 
     func agentStatus(for provider: ProviderKind) -> AgentStatus {
+        if let transientStatus = transientStatuses[provider] {
+            return transientStatus
+        }
+
         let snapshot = snapshot(for: provider)
         if snapshot.fiveHour.usedPercentage != nil || snapshot.weekly.usedPercentage != nil {
             return AgentStatus(provider: provider, availability: .available, message: nil)
@@ -272,10 +287,24 @@ final class UsageStore: ObservableObject {
             preservedFailureCount: preservedFailureCounts[current.provider, default: 0]
         ) else {
             preservedFailureCounts[current.provider] = 0
+            transientStatuses[current.provider] = nil
             return current
         }
         preservedFailureCounts[current.provider, default: 0] += 1
+        updateTransientStatus(for: current)
         return previous
+    }
+
+    private func updateTransientStatus(for snapshot: ProviderSnapshot) {
+        let message = snapshot.fiveHour.message ?? snapshot.weekly.message
+        guard snapshot.provider == .claude,
+              let message,
+              isRateLimitMessage(message) else {
+            transientStatuses[snapshot.provider] = nil
+            return
+        }
+
+        transientStatuses[snapshot.provider] = classifyClaudeStatus(message: message)
     }
 
     private func shouldPreservePreviousSnapshot(
@@ -294,7 +323,7 @@ final class UsageStore: ObservableObject {
         }
 
         let message = (current.fiveHour.message ?? current.weekly.message ?? "").lowercased()
-        if message.contains("http 429") || message.contains("rate limit") {
+        if isRateLimitMessage(message) {
             return true
         }
 
@@ -310,11 +339,15 @@ final class UsageStore: ObservableObject {
             || message.contains("credentials could not be read")
             || message.contains("authentication failed")
             || message.contains("session expired")
+            || message.contains("keychain")
     }
 
     private func classifyClaudeStatus(message: String) -> AgentStatus {
         let normalized = message.lowercased()
 
+        if isRateLimitMessage(normalized) {
+            return AgentStatus(provider: .claude, availability: .rateLimited, message: message)
+        }
         if normalized.contains("credentials not found")
             || normalized.contains("credentials could not be read") {
             return AgentStatus(provider: .claude, availability: .missingAuth, message: message)
@@ -328,6 +361,11 @@ final class UsageStore: ObservableObject {
         }
 
         return AgentStatus(provider: .claude, availability: .error(message), message: message)
+    }
+
+    private func isRateLimitMessage(_ message: String) -> Bool {
+        let normalized = message.lowercased()
+        return normalized.contains("http 429") || normalized.contains("rate limit")
     }
 
     private func classifyCodexStatus(message: String) -> AgentStatus {

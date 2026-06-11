@@ -26,6 +26,7 @@ struct ClaudeCredentialLoaderTests {
         let loader = ClaudeCredentialLoader(
             homeDirectory: homeDirectory,
             environment: ["CLAUDE_CODE_OAUTH_TOKEN": "env-token"],
+            setupTokenStore: .empty,
             keychainLoadOverride: .success(nil)
         )
 
@@ -46,6 +47,7 @@ struct ClaudeCredentialLoaderTests {
         let loader = ClaudeCredentialLoader(
             homeDirectory: homeDirectory,
             environment: ["CLAUDE_CODE_OAUTH_TOKEN": " env-token \n"],
+            setupTokenStore: .empty,
             keychainLoadOverride: .success(nil)
         )
 
@@ -56,10 +58,98 @@ struct ClaudeCredentialLoaderTests {
     }
 
     @Test
+    func resolveCredentialsPrefersSetupTokenBeforeEnvironmentAndKeychain() throws {
+        let homeDirectory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: homeDirectory) }
+
+        let store = ClaudeSetupTokenStore(
+            loadToken: { .success(" setup-token \n") },
+            saveToken: { _ in .success(()) },
+            deleteToken: { .success(()) }
+        )
+        let loader = ClaudeCredentialLoader(
+            homeDirectory: homeDirectory,
+            environment: ["CLAUDE_CODE_OAUTH_TOKEN": "env-token"],
+            setupTokenStore: store,
+            keychainLoadOverride: .success(
+                ClaudeCredentialResult(
+                    oauth: ClaudeOAuthCredentials(
+                        accessToken: "keychain-token",
+                        refreshToken: "refresh-token",
+                        expiresAt: nil,
+                        subscriptionType: nil
+                    ),
+                    source: .keychain,
+                    fullData: [:]
+                )
+            )
+        )
+
+        let resolution = loader.resolveCredentials()
+
+        #expect(resolution.credentials?.source == .setupToken)
+        #expect(resolution.credentials?.oauth.accessToken == "setup-token")
+        #expect(resolution.credentials?.oauth.refreshToken == nil)
+    }
+
+    @Test
+    func resolveCredentialsFallsBackToEnvironmentBeforeClaudeKeychain() throws {
+        let homeDirectory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: homeDirectory) }
+
+        let loader = ClaudeCredentialLoader(
+            homeDirectory: homeDirectory,
+            environment: ["CLAUDE_CODE_OAUTH_TOKEN": "env-token"],
+            setupTokenStore: .empty,
+            keychainLoadOverride: .success(
+                ClaudeCredentialResult(
+                    oauth: ClaudeOAuthCredentials(
+                        accessToken: "keychain-token",
+                        refreshToken: nil,
+                        expiresAt: nil,
+                        subscriptionType: nil
+                    ),
+                    source: .keychain,
+                    fullData: [:]
+                )
+            )
+        )
+
+        let resolution = loader.resolveCredentials()
+
+        #expect(resolution.credentials?.source == .environment)
+        #expect(resolution.credentials?.oauth.accessToken == "env-token")
+    }
+
+    @Test
+    func resolveCredentialsPreservesSetupTokenStoreFailureMessage() throws {
+        let homeDirectory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: homeDirectory) }
+
+        let store = ClaudeSetupTokenStore(
+            loadToken: { .failure(.accessDenied) },
+            saveToken: { _ in .success(()) },
+            deleteToken: { .success(()) }
+        )
+        let loader = ClaudeCredentialLoader(
+            homeDirectory: homeDirectory,
+            environment: [:],
+            setupTokenStore: store,
+            keychainLoadOverride: .success(nil)
+        )
+
+        let resolution = loader.resolveCredentials()
+
+        #expect(resolution.credentials == nil)
+        #expect(resolution.issue?.message == "AIPace Claude setup-token Keychain access denied.")
+    }
+
+    @Test
     func needsRefreshHonorsExpiryBuffer() {
         let loader = ClaudeCredentialLoader(
             homeDirectory: FileManager.default.homeDirectoryForCurrentUser,
             environment: [:],
+            setupTokenStore: .empty,
             keychainLoadOverride: .success(nil)
         )
 
@@ -80,6 +170,7 @@ struct ClaudeCredentialLoaderTests {
         let loader = ClaudeCredentialLoader(
             homeDirectory: homeDirectory,
             environment: [:],
+            setupTokenStore: .empty,
             keychainLoadOverride: .success(nil)
         )
         let result = ClaudeCredentialResult(
@@ -112,6 +203,7 @@ struct ClaudeCredentialLoaderTests {
         let loader = ClaudeCredentialLoader(
             homeDirectory: try makeTemporaryDirectory(),
             environment: [:],
+            setupTokenStore: .empty,
             keychainLoadOverride: .success(nil)
         )
 

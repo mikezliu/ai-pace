@@ -25,13 +25,13 @@ struct ClaudeProbe: Sendable {
                     throw ProcessRunnerError.invalidResponse(issue.message)
                 }
                 if let statusData = try? await apiClient.fetchStatus(), statusData.loggedIn == true {
-                    throw ProcessRunnerError.invalidResponse("Claude is logged in, but credentials could not be read from file, Keychain, or environment.")
+                    throw ProcessRunnerError.invalidResponse("Claude is logged in, but credentials could not be read from file, AIPace setup-token, environment, or Keychain.")
                 }
                 throw ProcessRunnerError.invalidResponse("Claude credentials not found.")
             }
 
             if credentialLoader.needsRefresh(credentials.oauth) {
-                if credentials.source == .environment {
+                if !credentials.source.supportsRefresh {
                     // setup-token style credentials have no refresh flow; use them as-is
                 } else if credentials.oauth.refreshToken != nil {
                     credentials = try await apiClient.refreshToken(credentials, credentialLoader)
@@ -45,7 +45,7 @@ struct ClaudeProbe: Sendable {
                 usage = try await apiClient.fetchUsage(credentials.oauth.accessToken)
             } catch let error as ProcessRunnerError {
                 if shouldRetryAfterAuthenticationError(error),
-                   credentials.source != .environment,
+                   credentials.source.supportsRefresh,
                    credentials.oauth.refreshToken != nil {
                     credentials = try await apiClient.refreshToken(credentials, credentialLoader)
                     usage = try await apiClient.fetchUsage(credentials.oauth.accessToken)
@@ -163,6 +163,10 @@ struct ClaudeProbe: Sendable {
                 return try JSONDecoder().decode(ClaudeUsageResponse.self, from: data)
             case 401, 403:
                 throw ProcessRunnerError.invalidResponse("Claude authentication failed.")
+            case 429:
+                let now = Date()
+                let rateLimitInfo = ClaudeRateLimitInfo(headers: http.allHeaderFields, now: now)
+                throw ProcessRunnerError.invalidResponse(rateLimitInfo.message(now: now))
             default:
                 throw ProcessRunnerError.invalidResponse("Claude usage endpoint returned HTTP \(http.statusCode).")
             }
@@ -255,6 +259,129 @@ struct ClaudeQuotaData: Decodable, Sendable {
         case utilization
         case resetsAt = "resets_at"
     }
+}
+
+struct ClaudeRateLimitInfo: Equatable, Sendable {
+    let retryAfter: Date?
+    let resets: [ClaudeRateLimitReset]
+
+    init(headers: [AnyHashable: Any], now: Date = Date()) {
+        retryAfter = Self.parseRetryAfter(Self.headerValue("retry-after", in: headers), now: now)
+        resets = Self.resetHeaders.compactMap { header, label in
+            guard let value = Self.headerValue(header, in: headers),
+                  let date = Self.parseRFC3339Date(value) else {
+                return nil
+            }
+            return ClaudeRateLimitReset(label: label, date: date)
+        }
+    }
+
+    init(retryAfter: Date? = nil, resets: [ClaudeRateLimitReset] = []) {
+        self.retryAfter = retryAfter
+        self.resets = resets
+    }
+
+    func message(now: Date = Date()) -> String {
+        var parts = ["Claude usage endpoint returned HTTP 429."]
+
+        if let retryAfter {
+            parts.append("Retry after \(Self.compactDuration(until: retryAfter, now: now)).")
+        }
+
+        for reset in resets {
+            parts.append("\(reset.label) reset in \(Self.compactDuration(until: reset.date, now: now)).")
+        }
+
+        return parts.joined(separator: " ")
+    }
+
+    private static let resetHeaders: [(header: String, label: String)] = [
+        ("anthropic-ratelimit-requests-reset", "Requests"),
+        ("anthropic-ratelimit-tokens-reset", "Tokens"),
+        ("anthropic-ratelimit-input-tokens-reset", "Input tokens"),
+        ("anthropic-ratelimit-output-tokens-reset", "Output tokens"),
+    ]
+
+    private static func headerValue(_ name: String, in headers: [AnyHashable: Any]) -> String? {
+        for (rawKey, rawValue) in headers {
+            let key = (rawKey as? String) ?? String(describing: rawKey)
+            guard key.caseInsensitiveCompare(name) == .orderedSame else {
+                continue
+            }
+
+            let value = (rawValue as? String) ?? String(describing: rawValue)
+            return value.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        }
+
+        return nil
+    }
+
+    private static func parseRetryAfter(_ value: String?, now: Date) -> Date? {
+        guard let value else {
+            return nil
+        }
+
+        if let seconds = TimeInterval(value), seconds.isFinite {
+            return now.addingTimeInterval(max(0, seconds))
+        }
+
+        return parseHTTPDate(value)
+    }
+
+    private static func parseRFC3339Date(_ value: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: value) {
+            return date
+        }
+
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: value)
+    }
+
+    private static func parseHTTPDate(_ value: String) -> Date? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+
+        for format in [
+            "EEE',' dd MMM yyyy HH':'mm':'ss zzz",
+            "EEEE',' dd'-'MMM'-'yy HH':'mm':'ss zzz",
+            "EEE MMM d HH':'mm':'ss yyyy",
+        ] {
+            formatter.dateFormat = format
+            if let date = formatter.date(from: value) {
+                return date
+            }
+        }
+
+        return nil
+    }
+
+    private static func compactDuration(until date: Date, now: Date) -> String {
+        let seconds = max(0, date.timeIntervalSince(now))
+
+        if seconds < 60 {
+            return "\(Int(ceil(seconds)))s"
+        }
+
+        let minutes = Int(ceil(seconds / 60))
+        if minutes < 60 {
+            return "\(minutes)m"
+        }
+
+        let hours = Int(ceil(seconds / 3600))
+        if hours < 24 {
+            return "\(hours)h"
+        }
+
+        return "\(Int(ceil(seconds / 86400)))d"
+    }
+}
+
+struct ClaudeRateLimitReset: Equatable, Sendable {
+    let label: String
+    let date: Date
 }
 
 struct ClaudeRefreshResponse: Decodable, Sendable {

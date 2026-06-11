@@ -54,6 +54,7 @@ enum AgentAvailability: Equatable {
     case missingAuth
     case accessDenied
     case sessionExpired
+    case rateLimited
     case notInstalled
     case notLoggedIn
     case error(String)
@@ -62,7 +63,7 @@ enum AgentAvailability: Equatable {
         switch self {
         case .loading, .available:
             return true
-        case .missingAuth, .accessDenied, .sessionExpired, .notInstalled, .notLoggedIn, .error:
+        case .missingAuth, .accessDenied, .sessionExpired, .rateLimited, .notInstalled, .notLoggedIn, .error:
             return false
         }
     }

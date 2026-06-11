@@ -238,8 +238,20 @@ final class StatusItemController: NSObject, NSMenuDelegate, NSPopoverDelegate {
 
         let isDark = (statusItem?.button?.effectiveAppearance ?? NSApp.effectiveAppearance)
             .bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        let claudeStyle = pillStyle(theme: resolvedTheme, provider: .claude, snapshot: store.claude, isDark: isDark)
-        let codexStyle = pillStyle(theme: resolvedTheme, provider: .codex, snapshot: store.codex, isDark: isDark)
+        let claudeStyle = Self.pillStyle(
+            theme: resolvedTheme,
+            provider: .claude,
+            snapshot: store.claude,
+            status: claudeStatus,
+            isDark: isDark
+        )
+        let codexStyle = Self.pillStyle(
+            theme: resolvedTheme,
+            provider: .codex,
+            snapshot: store.codex,
+            status: codexStatus,
+            isDark: isDark
+        )
         let fallbackStyle = StatusPillStyle(background: Color(red: 0.36, green: 0.38, blue: 0.42), foreground: .white)
 
         let usesFallbackLabel = StatusItemLabelView.resolvedFallbackText(claudeText: claudeText, codexText: codexText) != nil
@@ -257,12 +269,16 @@ final class StatusItemController: NSObject, NSMenuDelegate, NSPopoverDelegate {
         )
     }
 
-    private func pillStyle(
+    static func pillStyle(
         theme: AppTheme,
         provider: ProviderKind,
         snapshot: ProviderSnapshot,
+        status: AgentStatus,
         isDark: Bool
     ) -> StatusPillStyle {
+        if case .rateLimited = status.availability {
+            return DynamicTheme.pillStyle(forRemaining: 0, isDark: isDark)
+        }
         if theme.isDynamic {
             return DynamicTheme.pillStyle(forRemaining: snapshot.lowestRemaining, isDark: isDark)
         }

@@ -61,8 +61,17 @@ AIPace is a lightweight menu bar app that shows your current `5h` and `weekly` u
 AIPace finds your Claude credentials by checking these locations in order:
 
 1. `~/.claude/.credentials.json`
-2. macOS Keychain service `Claude Code-credentials`
+2. AIPace's own macOS Keychain item for a `claude setup-token`
 3. `CLAUDE_CODE_OAUTH_TOKEN` environment variable
+4. macOS Keychain service `Claude Code-credentials`
+
+To avoid locked-screen prompts from Claude Code's Keychain item, run:
+
+```bash
+claude setup-token
+```
+
+Then paste the generated token into **Settings -> Agents -> Claude setup-token**. AIPace stores it in its own Keychain item and never exports it to your shell environment.
 
 Then it calls:
 
@@ -118,8 +127,8 @@ After launch, look for the Claude and Codex stats in your menu bar.
 
 | Problem | What to try |
 |---------|-------------|
-| Claude unavailable | Make sure `claude` is installed and logged in, or set `CLAUDE_CODE_OAUTH_TOKEN` |
-| Claude Keychain prompt | Expected if your credentials are stored in Keychain — just approve it |
+| Claude unavailable | Make sure `claude` is installed and logged in, or paste a `claude setup-token` in Settings |
+| Claude Keychain prompt | Prefer a `claude setup-token` in Settings so AIPace can avoid Claude Code's Keychain item while your Mac is locked |
 | Codex unavailable | Check that the `codex` CLI is installed, on your `PATH`, and logged in |
 | Codex works in Terminal but not from Xcode | Xcode-launched apps often inherit a different `PATH`; AIPace now augments `PATH` with your login shell and common macOS install directories |
 | Usage stuck on loading | Try the refresh button, then relaunch the app so it picks up your current shell environment |

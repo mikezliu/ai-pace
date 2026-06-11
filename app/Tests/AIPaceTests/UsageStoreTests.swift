@@ -62,6 +62,9 @@ struct UsageStoreTests {
         #expect(store.claude.weekly.usedPercentage == 70)
         #expect(store.codex.fiveHour.usedPercentage == 11)
         #expect(store.codex.weekly.usedPercentage == 22)
+        #expect(store.agentStatus(for: .claude).availability == .rateLimited)
+        #expect(store.agentStatus(for: .claude).message == "HTTP 429 rate limit")
+        #expect(store.visibleSnapshots.map { $0.provider } == [.claude, .codex])
         #expect(store.lastUpdated != nil)
     }
 
@@ -102,6 +105,54 @@ struct UsageStoreTests {
         #expect(store.claude.weekly.usedPercentage == nil)
         #expect(store.claude.fiveHour.message == "Claude authentication failed.")
         #expect(store.agentStatus(for: .claude).availability == .sessionExpired)
+    }
+
+    @Test
+    @MainActor
+    func credentialsChangedDoesNotOverwriteClaudeStatusWithoutRefreshing() {
+        let suiteName = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = UsageStore(
+            claudeProbe: ProbeStub(queue: ProbeQueue([makeSnapshot(.claude, fiveHourUsed: 1, weeklyUsed: 2)])),
+            codexProbe: ProbeStub(queue: ProbeQueue([makeSnapshot(.codex, fiveHourUsed: 3, weeklyUsed: 4)])),
+            notificationManager: NotificationManagerSpy(),
+            userDefaults: defaults,
+            startRefreshLoop: false
+        )
+        store.claude = makeSnapshot(
+            .claude,
+            fiveHourMessage: "AIPace Claude setup-token Keychain access denied.",
+            weeklyMessage: "AIPace Claude setup-token Keychain access denied."
+        )
+
+        store.noteClaudeCredentialsChanged()
+
+        #expect(store.agentStatus(for: .claude).availability == .accessDenied)
+    }
+
+    @Test
+    @MainActor
+    func claudeRateLimitIsClassifiedSeparatelyFromGenericError() {
+        let suiteName = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = UsageStore(
+            claudeProbe: ProbeStub(queue: ProbeQueue([ProviderSnapshot.loading(.claude)])),
+            codexProbe: ProbeStub(queue: ProbeQueue([ProviderSnapshot.loading(.codex)])),
+            notificationManager: NotificationManagerSpy(),
+            userDefaults: defaults,
+            startRefreshLoop: false
+        )
+        store.claude = makeSnapshot(
+            .claude,
+            fiveHourMessage: "Claude usage endpoint returned HTTP 429.",
+            weeklyMessage: "Claude usage endpoint returned HTTP 429."
+        )
+
+        #expect(store.agentStatus(for: .claude).availability == .rateLimited)
     }
 
     @Test

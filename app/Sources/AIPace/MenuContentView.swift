@@ -507,6 +507,20 @@ struct SettingsView: View {
 
                 Divider()
 
+                settingRow(loc.claudeSetupToken) {
+                    ClaudeSetupTokenControl(loc: loc) {
+                        store.noteClaudeCredentialsChanged()
+                    }
+                }
+
+                Text(loc.claudeSetupTokenDesc)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 136)
+
+                Divider()
+
                 AgentStatusRow(status: store.agentStatus(for: .claude))
 
                 Divider()
@@ -681,6 +695,129 @@ private struct AgentNameField: View {
     }
 }
 
+private struct ClaudeSetupTokenControl: View {
+    let loc: Loc
+    let credentialStore: ClaudeSetupTokenStore
+    let onTokenChanged: () -> Void
+
+    @State private var draftToken = ""
+    @State private var hasStoredToken = false
+    @State private var feedbackText: String?
+    @State private var feedbackIsError = false
+
+    init(
+        loc: Loc,
+        credentialStore: ClaudeSetupTokenStore = .live,
+        onTokenChanged: @escaping () -> Void = {}
+    ) {
+        self.loc = loc
+        self.credentialStore = credentialStore
+        self.onTokenChanged = onTokenChanged
+    }
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            HStack(spacing: 8) {
+                SecureField(loc.claudeSetupTokenPlaceholder, text: $draftToken)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12, design: .monospaced))
+                    .frame(width: 160)
+                    .onSubmit(saveToken)
+
+                Button(loc.save) {
+                    saveToken()
+                }
+                .buttonStyle(.borderless)
+                .disabled(draftToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .pointerOnHover()
+
+                Button {
+                    removeToken()
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .buttonStyle(.borderless)
+                .disabled(!hasStoredToken)
+                .help(loc.remove)
+                .pointerOnHover()
+            }
+
+            Text(statusText)
+                .font(.system(size: 11))
+                .foregroundStyle(statusStyle)
+                .lineLimit(2)
+                .multilineTextAlignment(.trailing)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: 300, alignment: .trailing)
+        }
+        .frame(width: 300, alignment: .trailing)
+        .onAppear(perform: refreshStoredState)
+    }
+
+    private var statusText: String {
+        if let feedbackText {
+            return feedbackText
+        }
+        return hasStoredToken ? loc.claudeSetupTokenStored : loc.claudeSetupTokenNotStored
+    }
+
+    private var statusStyle: AnyShapeStyle {
+        if feedbackText == nil {
+            return AnyShapeStyle(.tertiary)
+        }
+        return AnyShapeStyle(feedbackIsError ? Color.orange : Color.secondary)
+    }
+
+    private func refreshStoredState() {
+        switch credentialStore.loadToken() {
+        case .success(let token):
+            hasStoredToken = token != nil
+            feedbackText = nil
+            feedbackIsError = false
+        case .failure(let issue):
+            hasStoredToken = false
+            feedbackText = issue.message
+            feedbackIsError = true
+        }
+    }
+
+    private func saveToken() {
+        let token = draftToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else {
+            feedbackText = loc.claudeSetupTokenEmpty
+            feedbackIsError = true
+            return
+        }
+
+        switch credentialStore.saveToken(token) {
+        case .success:
+            draftToken = ""
+            hasStoredToken = true
+            feedbackText = loc.claudeSetupTokenSaved
+            feedbackIsError = false
+            onTokenChanged()
+        case .failure(let issue):
+            feedbackText = issue.message
+            feedbackIsError = true
+        }
+    }
+
+    private func removeToken() {
+        switch credentialStore.deleteToken() {
+        case .success:
+            draftToken = ""
+            hasStoredToken = false
+            feedbackText = loc.claudeSetupTokenRemoved
+            feedbackIsError = false
+            onTokenChanged()
+        case .failure(let issue):
+            feedbackText = issue.message
+            feedbackIsError = true
+        }
+    }
+}
+
 private struct AccentColorControl: View {
     @Binding var hexValue: String
     let fallbackColor: Color
@@ -817,7 +954,7 @@ private struct AgentStatusRow: View {
             return .green
         case .loading:
             return .secondary
-        case .missingAuth, .accessDenied, .sessionExpired, .notInstalled, .notLoggedIn:
+        case .missingAuth, .accessDenied, .sessionExpired, .rateLimited, .notInstalled, .notLoggedIn:
             return .orange
         case .error:
             return .red

@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftUI
 import Testing
 @testable import AIPace
 
@@ -27,5 +28,27 @@ struct StatusItemControllerTests {
         #expect(StatusItemController.statusItemLength(forContentWidth: 0) == 32)
         #expect(StatusItemController.statusItemLength(forContentWidth: 10) == 32)
         #expect(StatusItemController.statusItemLength(forContentWidth: 40) == 52)
+    }
+
+    @Test
+    @MainActor
+    func rateLimitedStatusUsesCriticalPillStyle() {
+        let snapshot = makeSnapshot(.claude, fiveHourUsed: 12, weeklyUsed: 40)
+        let status = AgentStatus(
+            provider: .claude,
+            availability: .rateLimited,
+            message: "Claude usage endpoint returned HTTP 429. Retry after 48m."
+        )
+
+        let style = StatusItemController.pillStyle(
+            theme: .dynamic,
+            provider: .claude,
+            snapshot: snapshot,
+            status: status,
+            isDark: false
+        )
+
+        #expect(style.background == DynamicTheme.criticalBackground)
+        #expect(style.foreground == Color.white)
     }
 }

@@ -9,8 +9,18 @@ struct ClaudeOAuthCredentials: Sendable, Equatable {
 
 enum ClaudeCredentialSource: Sendable, Equatable {
     case file
-    case keychain
+    case setupToken
     case environment
+    case keychain
+
+    var supportsRefresh: Bool {
+        switch self {
+        case .file, .keychain:
+            return true
+        case .setupToken, .environment:
+            return false
+        }
+    }
 }
 
 enum ClaudeCredentialLoadIssue: Error, Sendable, Equatable {
@@ -41,20 +51,24 @@ struct ClaudeCredentialResolution {
 struct ClaudeCredentialLoader {
     private let homeDirectory: URL
     private let environment: [String: String]
+    private let setupTokenStore: ClaudeSetupTokenStore
     private let keychainService: String
     private let keychainLoadOverride: Result<ClaudeCredentialResult?, ClaudeCredentialLoadIssue>?
     private let keychainSaveOverride: (@Sendable (ClaudeCredentialResult) -> Void)?
     private static let refreshBufferMs: Double = 5 * 60 * 1000
+    private static let keychainCommandTimeout: TimeInterval = 1
 
     init(
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
         environment: [String: String] = ProcessInfo.processInfo.environment,
+        setupTokenStore: ClaudeSetupTokenStore = .live,
         keychainService: String = "Claude Code-credentials",
         keychainLoadOverride: Result<ClaudeCredentialResult?, ClaudeCredentialLoadIssue>? = nil,
         keychainSaveOverride: (@Sendable (ClaudeCredentialResult) -> Void)? = nil
     ) {
         self.homeDirectory = homeDirectory
         self.environment = environment
+        self.setupTokenStore = setupTokenStore
         self.keychainService = keychainService
         self.keychainLoadOverride = keychainLoadOverride
         self.keychainSaveOverride = keychainSaveOverride
@@ -69,13 +83,22 @@ struct ClaudeCredentialLoader {
             return ClaudeCredentialResolution(credentials: credentials, issue: nil)
         }
 
-        let keychainResult = loadFromKeychain()
-        if case .success(let credentials) = keychainResult, let credentials {
+        let setupTokenResult = loadFromSetupTokenStore()
+        if case .success(let credentials) = setupTokenResult, let credentials {
             return ClaudeCredentialResolution(credentials: credentials, issue: nil)
         }
 
         if let credentials = loadFromEnvironment() {
             return ClaudeCredentialResolution(credentials: credentials, issue: nil)
+        }
+
+        let keychainResult = loadFromKeychain()
+        if case .success(let credentials) = keychainResult, let credentials {
+            return ClaudeCredentialResolution(credentials: credentials, issue: nil)
+        }
+
+        if case .failure(let issue) = setupTokenResult {
+            return ClaudeCredentialResolution(credentials: nil, issue: issue)
         }
 
         switch keychainResult {
@@ -100,7 +123,7 @@ struct ClaudeCredentialLoader {
             saveToFile(result)
         case .keychain:
             saveToKeychain(result)
-        case .environment:
+        case .setupToken, .environment:
             return
         }
     }
@@ -122,6 +145,25 @@ struct ClaudeCredentialLoader {
         return makeCredentialResult(from: root, source: .file)
     }
 
+    private func loadFromSetupTokenStore() -> Result<ClaudeCredentialResult?, ClaudeCredentialLoadIssue> {
+        switch setupTokenStore.loadToken() {
+        case .success(let token):
+            guard let rawToken = token else {
+                return .success(nil)
+            }
+            let token = rawToken.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !token.isEmpty else {
+                return .success(nil)
+            }
+            return .success(staticTokenCredential(token, source: .setupToken))
+        case .failure(let issue):
+            switch issue {
+            case .accessDenied, .invalidStoredToken, .keychainFailure:
+                return .failure(.keychainFailure(issue.message))
+            }
+        }
+    }
+
     private func loadFromKeychain() -> Result<ClaudeCredentialResult?, ClaudeCredentialLoadIssue> {
         if let keychainLoadOverride {
             return keychainLoadOverride
@@ -132,7 +174,7 @@ struct ClaudeCredentialLoader {
                 executable: "/usr/bin/security",
                 arguments: ["find-generic-password", "-s", keychainService, "-w"],
                 input: nil,
-                timeout: nil,
+                timeout: Self.keychainCommandTimeout,
                 currentDirectory: nil
             )
 
@@ -161,9 +203,18 @@ struct ClaudeCredentialLoader {
             return nil
         }
 
+        return staticTokenCredential(token, source: .environment)
+    }
+
+    private func staticTokenCredential(_ token: String, source: ClaudeCredentialSource) -> ClaudeCredentialResult {
         return ClaudeCredentialResult(
-            oauth: ClaudeOAuthCredentials(accessToken: token, refreshToken: nil, expiresAt: nil, subscriptionType: nil),
-            source: .environment,
+            oauth: ClaudeOAuthCredentials(
+                accessToken: token,
+                refreshToken: nil,
+                expiresAt: nil,
+                subscriptionType: nil
+            ),
+            source: source,
             fullData: [:]
         )
     }
@@ -223,7 +274,7 @@ struct ClaudeCredentialLoader {
             executable: "/usr/bin/security",
             arguments: ["delete-generic-password", "-s", keychainService],
             input: nil,
-            timeout: 10,
+            timeout: Self.keychainCommandTimeout,
             currentDirectory: nil
         )
 
@@ -231,7 +282,7 @@ struct ClaudeCredentialLoader {
             executable: "/usr/bin/security",
             arguments: ["add-generic-password", "-s", keychainService, "-w", json],
             input: nil,
-            timeout: 10,
+            timeout: Self.keychainCommandTimeout,
             currentDirectory: nil
         )
     }
