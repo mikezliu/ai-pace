@@ -62,10 +62,56 @@ struct UsageStoreTests {
         #expect(store.claude.weekly.usedPercentage == 70)
         #expect(store.codex.fiveHour.usedPercentage == 11)
         #expect(store.codex.weekly.usedPercentage == 22)
-        #expect(store.agentStatus(for: .claude).availability == .rateLimited)
-        #expect(store.agentStatus(for: .claude).message == "HTTP 429 rate limit")
+        // The previous snapshot still has usable percentages, so the status stays
+        // `.available` and the menu bar shows the preserved usage rather than a
+        // misleading rate-limit pill.
+        #expect(store.agentStatus(for: .claude).availability == .available)
         #expect(store.visibleSnapshots.map { $0.provider } == [.claude, .codex])
         #expect(store.lastUpdated != nil)
+    }
+
+    @Test
+    @MainActor
+    func transientRateLimitDoesNotOverrideMenuBarWhenUsageIsPreserved() async {
+        let suiteName = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let previousClaude = makeSnapshot(.claude, fiveHourUsed: 14, weeklyUsed: 2)
+        let claudeQueue = ProbeQueue([
+            makeSnapshot(
+                .claude,
+                fiveHourMessage: "Claude usage endpoint returned HTTP 429. Retry after 0s.",
+                weeklyMessage: "Claude usage endpoint returned HTTP 429. Retry after 0s."
+            ),
+        ])
+        let codexQueue = ProbeQueue([
+            makeSnapshot(.codex, fiveHourUsed: 5, weeklyUsed: 10),
+        ])
+        let store = UsageStore(
+            claudeProbe: ProbeStub(queue: claudeQueue),
+            codexProbe: ProbeStub(queue: codexQueue),
+            notificationManager: NotificationManagerSpy(),
+            userDefaults: defaults,
+            startRefreshLoop: false
+        )
+        store.claude = previousClaude
+
+        await store.refresh()
+
+        // Preserved usage stays visible and the status is treated as available,
+        // so the menu bar shows the real remaining usage instead of "Cl 0/0s".
+        let status = store.agentStatus(for: .claude)
+        #expect(status.availability == .available)
+
+        let text = StatusItemFormatter.menuBarText(
+            prefix: "Cl",
+            snapshot: store.claude,
+            status: status,
+            mode: .remaining,
+            loc: Loc(lang: .english)
+        )
+        #expect(text == "Cl 86/98")
     }
 
     @Test

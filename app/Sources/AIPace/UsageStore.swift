@@ -180,13 +180,17 @@ final class UsageStore: ObservableObject {
     }
 
     func agentStatus(for provider: ProviderKind) -> AgentStatus {
-        if let transientStatus = transientStatuses[provider] {
-            return transientStatus
-        }
-
         let snapshot = snapshot(for: provider)
+        // Real (or preserved) usage data wins over a transient rate-limit status.
+        // A spurious 429 on the usage endpoint (often "retry after 0s") would
+        // otherwise force the menu bar to a misleading "0/<retry>" pill while the
+        // popover keeps showing the preserved percentages. Keep the two consistent.
         if snapshot.fiveHour.usedPercentage != nil || snapshot.weekly.usedPercentage != nil {
             return AgentStatus(provider: provider, availability: .available, message: nil)
+        }
+
+        if let transientStatus = transientStatuses[provider] {
+            return transientStatus
         }
 
         let message = snapshot.fiveHour.message ?? snapshot.weekly.message
