@@ -67,7 +67,7 @@ enum StatusItemFormatter {
         loc: Loc,
         now: Date = .now
     ) -> String? {
-        if status.availability.showsInPopover {
+        if status.availability.showsUsageText {
             return text(prefix: prefix, snapshot: snapshot, mode: mode, now: now)
         }
         if case .rateLimited = status.availability,
@@ -80,25 +80,51 @@ enum StatusItemFormatter {
         return "\(prefix) \(label)"
     }
 
+    /// Joined 5h/weekly values for the menu bar, dropping windows the provider
+    /// affirmatively reported as nonexistent (e.g. Codex plans with only a
+    /// weekly limit render "Cx 32" instead of "Cx --/32"). Model-scoped weekly
+    /// values (e.g. the Fable cap) follow the weekly value in brackets, as in
+    /// "31/54(20)".
+    private static func joinedValue(for snapshot: ProviderSnapshot, transform: (UsageWindow) -> String) -> String {
+        let scopedValues = snapshot.modelWeeklies
+            .filter { $0.usedPercentage != nil }
+            .map(transform)
+        let scopedSuffix = scopedValues.isEmpty ? "" : "(\(scopedValues.joined(separator: "/")))"
+
+        var components: [String] = []
+        if !snapshot.fiveHour.isAbsent {
+            components.append(transform(snapshot.fiveHour))
+        }
+        if !snapshot.weekly.isAbsent {
+            components.append(transform(snapshot.weekly) + scopedSuffix)
+        } else if !scopedSuffix.isEmpty {
+            components.append(scopedSuffix)
+        }
+        if components.isEmpty {
+            components = [snapshot.fiveHour, snapshot.weekly].map(transform)
+        }
+        return components.joined(separator: "/")
+    }
+
     static func text(prefix: String, snapshot: ProviderSnapshot, mode: MenuBarDisplayMode, now: Date = .now) -> String {
         switch mode {
         case .usage:
-            return "\(prefix) \(compactValue(for: snapshot.fiveHour))/\(compactValue(for: snapshot.weekly))"
+            return "\(prefix) \(joinedValue(for: snapshot, transform: compactValue(for:)))"
         case .remaining:
-            return "\(prefix) \(compactRemainingValue(for: snapshot.fiveHour))/\(compactRemainingValue(for: snapshot.weekly))"
+            return "\(prefix) \(joinedValue(for: snapshot, transform: compactRemainingValue(for:)))"
         case .remainingWithReset:
-            let remaining = "\(compactRemainingValue(for: snapshot.fiveHour))/\(compactRemainingValue(for: snapshot.weekly))"
+            let remaining = joinedValue(for: snapshot, transform: compactRemainingValue(for:))
             return "\(prefix) \(remaining)/\(compactResetValue(for: snapshot, now: now))"
         case .insight:
-            let insight = WeeklyPacing.formattedDelta(for: snapshot.weekly) ?? "--"
+            let insight = WeeklyPacing.formattedDelta(for: snapshot.weekly, now: now) ?? "--"
             return "\(prefix) \(insight)"
         case .usageAndInsight:
-            let usage = "\(compactValue(for: snapshot.fiveHour))/\(compactValue(for: snapshot.weekly))"
-            let insight = WeeklyPacing.formattedDelta(for: snapshot.weekly) ?? "--"
+            let usage = joinedValue(for: snapshot, transform: compactValue(for:))
+            let insight = WeeklyPacing.formattedDelta(for: snapshot.weekly, now: now) ?? "--"
             return "\(prefix) \(usage) \(insight)"
         case .remainingAndInsight:
-            let remaining = "\(compactRemainingValue(for: snapshot.fiveHour))/\(compactRemainingValue(for: snapshot.weekly))"
-            let insight = WeeklyPacing.formattedDelta(for: snapshot.weekly) ?? "--"
+            let remaining = joinedValue(for: snapshot, transform: compactRemainingValue(for:))
+            let insight = WeeklyPacing.formattedDelta(for: snapshot.weekly, now: now) ?? "--"
             return "\(prefix) \(remaining) \(insight)"
         }
     }
@@ -120,6 +146,14 @@ enum StatusItemFormatter {
         }
 
         let label = message[labelRange].replacingOccurrences(of: " ", with: "").lowercased()
-        return label.isEmpty ? nil : label
+        guard !label.isEmpty else {
+            return nil
+        }
+        // A zero retry hint ("Retry after 0s") would render as the nonsense
+        // pill "0/0s"; fall back to the generic "Wait" label instead.
+        if Int(label.prefix(while: \.isNumber)) == 0 {
+            return nil
+        }
+        return label
     }
 }

@@ -50,7 +50,17 @@ struct ClaudeProbeTests {
             fetchUsage: { _ in
                 ClaudeUsageResponse(
                     fiveHour: ClaudeQuotaData(utilization: 25, resetsAt: "2026-04-06T12:00:00Z"),
-                    sevenDay: ClaudeQuotaData(utilization: 60, resetsAt: "2026-04-12T12:00:00Z")
+                    sevenDay: ClaudeQuotaData(utilization: 60, resetsAt: "2026-04-12T12:00:00Z"),
+                    limits: [
+                        ClaudeLimitEntry(kind: "session", percent: 25, resetsAt: "2026-04-06T12:00:00Z", scope: nil),
+                        ClaudeLimitEntry(kind: "weekly_all", percent: 60, resetsAt: "2026-04-12T12:00:00Z", scope: nil),
+                        ClaudeLimitEntry(
+                            kind: "weekly_scoped",
+                            percent: 74,
+                            resetsAt: "2026-04-12T12:00:00Z",
+                            scope: ClaudeLimitScope(model: ClaudeLimitScopeModel(id: nil, displayName: "Fable"))
+                        ),
+                    ]
                 )
             }
         )
@@ -67,6 +77,39 @@ struct ClaudeProbeTests {
         #expect(snapshot.detail == "Max · Ada Lovelace")
         #expect(snapshot.fiveHour.message == nil)
         #expect(snapshot.weekly.message == nil)
+        #expect(snapshot.modelWeeklies.count == 1)
+        #expect(snapshot.modelWeeklies.first?.scopeLabel == "Fable")
+        #expect(snapshot.modelWeeklies.first?.usedPercentage == 74)
+        #expect(snapshot.modelWeeklies.first?.kind == .weekly)
+    }
+
+    @Test
+    func usageResponseDecodesModelScopedWeeklyLimits() throws {
+        // Shape matches the live /api/oauth/usage payload (irrelevant fields omitted
+        // by the decoder; scoped entries without a percent or model are skipped).
+        let json = """
+        {
+          "five_hour": {"utilization": 52.0, "resets_at": "2026-07-18T05:10:00+00:00"},
+          "seven_day": {"utilization": 43.0, "resets_at": "2026-07-18T08:00:00+00:00"},
+          "seven_day_opus": null,
+          "limits": [
+            {"kind": "session", "group": "session", "percent": 52, "severity": "normal", "resets_at": "2026-07-18T05:10:00+00:00", "scope": null, "is_active": false},
+            {"kind": "weekly_all", "group": "weekly", "percent": 43, "resets_at": "2026-07-18T08:00:00+00:00", "scope": null, "is_active": false},
+            {"kind": "weekly_scoped", "group": "weekly", "percent": 74, "resets_at": "2026-07-18T08:00:00+00:00", "scope": {"model": {"id": null, "display_name": "Fable"}, "surface": null}, "is_active": true},
+            {"kind": "weekly_scoped", "group": "weekly", "percent": 12, "resets_at": null, "scope": {"model": null, "surface": "cowork"}, "is_active": false}
+          ]
+        }
+        """
+
+        let response = try JSONDecoder().decode(ClaudeUsageResponse.self, from: Data(json.utf8))
+        let windows = ClaudeProbe().modelWeeklyWindows(from: response)
+
+        #expect(response.fiveHour?.utilization == 52)
+        #expect(response.sevenDay?.utilization == 43)
+        #expect(windows.count == 1)
+        #expect(windows.first?.scopeLabel == "Fable")
+        #expect(windows.first?.usedPercentage == 74)
+        #expect(windows.first?.resetsAt != nil)
     }
 
     @Test
@@ -177,6 +220,103 @@ struct ClaudeProbeTests {
         let message = ClaudeRateLimitInfo(headers: [:], now: now).message(now: now)
 
         #expect(message == "Claude usage endpoint returned HTTP 429.")
+    }
+
+    @Test
+    func fetchRetriesOnceWhenRateLimitInvitesImmediateRetry() async throws {
+        actor CallCounter {
+            var calls = 0
+            func next() -> Int {
+                calls += 1
+                return calls
+            }
+        }
+
+        let counter = CallCounter()
+        let homeDirectory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: homeDirectory) }
+
+        let store = ClaudeSetupTokenStore(
+            loadToken: { .success("setup-token") },
+            saveToken: { _ in .success(()) },
+            deleteToken: { .success(()) }
+        )
+        let loader = ClaudeCredentialLoader(
+            homeDirectory: homeDirectory,
+            environment: [:],
+            setupTokenStore: store,
+            keychainLoadOverride: .success(nil)
+        )
+        let apiClient = ClaudeAPIClient(
+            fetchStatus: { ClaudeAuthStatus(loggedIn: nil) },
+            refreshToken: { credentials, _ in credentials },
+            fetchUsage: { _ in
+                if await counter.next() == 1 {
+                    throw ProcessRunnerError.invalidResponse("Claude usage endpoint returned HTTP 429. Retry after 0s.")
+                }
+                return ClaudeUsageResponse(
+                    fiveHour: ClaudeQuotaData(utilization: 41, resetsAt: nil),
+                    sevenDay: ClaudeQuotaData(utilization: 42, resetsAt: nil)
+                )
+            }
+        )
+
+        let snapshot = await ClaudeProbe(
+            credentialLoader: loader,
+            accountInfoResolver: ClaudeAccountInfoResolver(configURL: homeDirectory.appendingPathComponent(".missing")),
+            apiClient: apiClient,
+            transientRateLimitRetryDelay: .zero
+        ).fetch()
+
+        #expect(snapshot.fiveHour.usedPercentage == 41)
+        #expect(snapshot.weekly.usedPercentage == 42)
+        #expect(await counter.calls == 2)
+    }
+
+    @Test
+    func fetchDoesNotRetryWhenRateLimitGivesMeaningfulRetryAfter() async throws {
+        actor CallCounter {
+            var calls = 0
+            func next() -> Int {
+                calls += 1
+                return calls
+            }
+        }
+
+        let counter = CallCounter()
+        let homeDirectory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: homeDirectory) }
+
+        let store = ClaudeSetupTokenStore(
+            loadToken: { .success("setup-token") },
+            saveToken: { _ in .success(()) },
+            deleteToken: { .success(()) }
+        )
+        let loader = ClaudeCredentialLoader(
+            homeDirectory: homeDirectory,
+            environment: [:],
+            setupTokenStore: store,
+            keychainLoadOverride: .success(nil)
+        )
+        let apiClient = ClaudeAPIClient(
+            fetchStatus: { ClaudeAuthStatus(loggedIn: nil) },
+            refreshToken: { credentials, _ in credentials },
+            fetchUsage: { _ in
+                _ = await counter.next()
+                throw ProcessRunnerError.invalidResponse("Claude usage endpoint returned HTTP 429. Retry after 40m.")
+            }
+        )
+
+        let snapshot = await ClaudeProbe(
+            credentialLoader: loader,
+            accountInfoResolver: ClaudeAccountInfoResolver(configURL: homeDirectory.appendingPathComponent(".missing")),
+            apiClient: apiClient,
+            transientRateLimitRetryDelay: .zero
+        ).fetch()
+
+        #expect(snapshot.fiveHour.usedPercentage == nil)
+        #expect(snapshot.fiveHour.message == "Claude usage endpoint returned HTTP 429. Retry after 40m.")
+        #expect(await counter.calls == 1)
     }
 
     @Test

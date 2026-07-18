@@ -715,8 +715,25 @@ struct Loc {
         }
     }
 
+    /// Short label for rate-limited states, shared by the settings status row
+    /// and the popover usage rows (where the raw HTTP 429 message is too long).
+    var rateLimitedTitle: String {
+        switch lang {
+        case .english: return "Rate limited"
+        case .spanish: return "Límite de tasa"
+        case .french: return "Limite de debit"
+        case .german: return "Rate-Limit"
+        case .japanese: return "レート制限中"
+        case .korean: return "요청 제한"
+        case .chineseSimplified: return "速率受限"
+        }
+    }
+
     func displayMessage(_ message: String?) -> String {
         guard let message else { return "—" }
+        if message.lowercased().contains("http 429") {
+            return rateLimitedTitle
+        }
         switch (lang, message) {
         case (.spanish, "Loading…"): return "Cargando…"
         case (.french, "Loading…"): return "Chargement…"
@@ -908,15 +925,7 @@ struct Loc {
             case .chineseSimplified: return "会话已过期"
             }
         case .rateLimited:
-            switch lang {
-            case .english: return "Rate limited"
-            case .spanish: return "Límite de tasa"
-            case .french: return "Limite de debit"
-            case .german: return "Rate-Limit"
-            case .japanese: return "レート制限中"
-            case .korean: return "요청 제한"
-            case .chineseSimplified: return "速率受限"
-            }
+            return rateLimitedTitle
         case .notInstalled:
             switch lang {
             case .english: return "Not installed"

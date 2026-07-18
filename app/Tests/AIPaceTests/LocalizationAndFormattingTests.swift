@@ -51,6 +51,60 @@ struct LocalizationAndFormattingTests {
     }
 
     @Test
+    func displayMessageShortensRateLimitMessagesForPopoverRows() {
+        #expect(Loc(lang: .english).displayMessage("Claude usage endpoint returned HTTP 429. Retry after 0s.") == "Rate limited")
+        #expect(Loc(lang: .korean).displayMessage("Claude usage endpoint returned HTTP 429.") == "요청 제한")
+        #expect(Loc(lang: .english).displayMessage("Codex is not installed or not on PATH.") == "Codex is not installed or not on PATH.")
+    }
+
+    @Test
+    func statusItemFormattingAppendsModelWeekliesInBrackets() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let snapshot = makeSnapshot(
+            .claude,
+            fiveHourUsed: 69,
+            weeklyUsed: 46,
+            fiveHourReset: now.addingTimeInterval(90 * 60),
+            modelWeeklies: [makeWindow(.weekly, used: 80, scopeLabel: "Fable")]
+        )
+
+        #expect(StatusItemFormatter.text(prefix: "Cl", snapshot: snapshot, mode: .usage, now: now) == "Cl 69/46(80)")
+        #expect(StatusItemFormatter.text(prefix: "Cl", snapshot: snapshot, mode: .remaining, now: now) == "Cl 31/54(20)")
+        #expect(StatusItemFormatter.text(prefix: "Cl", snapshot: snapshot, mode: .remainingWithReset, now: now) == "Cl 31/54(20)/1h")
+
+        // Scoped windows without data don't add an empty bracket.
+        let noScopedData = makeSnapshot(
+            .claude,
+            fiveHourUsed: 69,
+            weeklyUsed: 46,
+            modelWeeklies: [makeWindow(.weekly, message: "x", scopeLabel: "Fable")]
+        )
+        #expect(StatusItemFormatter.text(prefix: "Cl", snapshot: noScopedData, mode: .usage, now: now) == "Cl 69/46")
+    }
+
+    @Test
+    func statusItemFormattingSkipsAbsentWindows() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+
+        // A weekly-only plan (e.g. Codex prolite) renders just the weekly value
+        // instead of "--/32", and its pacing insight comes from the weekly data.
+        let weeklyOnly = makeSnapshot(
+            .codex,
+            weeklyUsed: 68,
+            weeklyReset: now.addingTimeInterval(5 * 24 * 3600),
+            fiveHourAbsent: true
+        )
+        #expect(StatusItemFormatter.text(prefix: "Cx", snapshot: weeklyOnly, mode: .usage, now: now) == "Cx 68")
+        #expect(StatusItemFormatter.text(prefix: "Cx", snapshot: weeklyOnly, mode: .remaining, now: now) == "Cx 32")
+        #expect(StatusItemFormatter.text(prefix: "Cx", snapshot: weeklyOnly, mode: .remainingWithReset, now: now) == "Cx 32/5d")
+        #expect(StatusItemFormatter.text(prefix: "Cx", snapshot: weeklyOnly, mode: .remainingAndInsight, now: now) == "Cx 32 -39%")
+
+        // If both windows are somehow absent, fall back to the placeholder pair.
+        let bothAbsent = makeSnapshot(.codex, fiveHourAbsent: true, weeklyAbsent: true)
+        #expect(StatusItemFormatter.text(prefix: "Cx", snapshot: bothAbsent, mode: .usage, now: now) == "Cx --/--")
+    }
+
+    @Test
     func statusItemRemainingWithResetFormatsTimeUntilSoonestReset() {
         let now = Date(timeIntervalSince1970: 1_000_000)
 
@@ -123,6 +177,17 @@ struct LocalizationAndFormattingTests {
         #expect(
             StatusItemFormatter.menuBarText(prefix: "Cl", snapshot: snapshot, status: rateLimitedWithRetry, mode: .remaining, loc: loc)
                 == "Cl 0/40m"
+        )
+
+        // A zero retry hint (burst 429) shows "Wait" instead of the nonsense "0/0s".
+        let rateLimitedRetryNow = AgentStatus(
+            provider: .claude,
+            availability: .rateLimited,
+            message: "Claude usage endpoint returned HTTP 429. Retry after 0s."
+        )
+        #expect(
+            StatusItemFormatter.menuBarText(prefix: "Cl", snapshot: snapshot, status: rateLimitedRetryNow, mode: .remaining, loc: loc)
+                == "Cl Wait"
         )
 
         // A generic error is surfaced too.

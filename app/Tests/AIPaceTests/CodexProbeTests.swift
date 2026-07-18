@@ -19,11 +19,60 @@ struct CodexProbeTests {
         let window = probe.parseWindow([
             "usedPercent": "62.5",
             "resetsAt": 1_710_000_000,
+            "windowDurationMins": 10_080,
         ])
 
         #expect(window?.usedPercent == 62.5)
         #expect(window?.resetsAt == Date(timeIntervalSince1970: 1_710_000_000))
+        #expect(window?.windowDurationMins == 10_080)
         #expect(probe.parseWindow(["resetsAt": 1_710_000_000]) == nil)
+        #expect(probe.parseWindow(["usedPercent": 5])?.windowDurationMins == nil)
+    }
+
+    @Test
+    func classifiedWindowsSortsByDurationRegardlessOfPosition() {
+        let probe = CodexProbe()
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let fiveHour = CodexRateLimitWindow(usedPercent: 10, resetsAt: now.addingTimeInterval(3600), windowDurationMins: 300)
+        let weekly = CodexRateLimitWindow(usedPercent: 68, resetsAt: now.addingTimeInterval(5 * 86_400), windowDurationMins: 10_080)
+
+        let normal = probe.classifiedWindows(primary: fiveHour, secondary: weekly, now: now)
+        #expect(normal.fiveHour == fiveHour)
+        #expect(normal.weekly == weekly)
+
+        let swapped = probe.classifiedWindows(primary: weekly, secondary: fiveHour, now: now)
+        #expect(swapped.fiveHour == fiveHour)
+        #expect(swapped.weekly == weekly)
+    }
+
+    @Test
+    func classifiedWindowsPutsSoloWeeklyPrimaryInWeeklySlot() {
+        // prolite-style payload: a single primary window that is a 7-day window.
+        let probe = CodexProbe()
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let weekly = CodexRateLimitWindow(usedPercent: 68, resetsAt: now.addingTimeInterval(5 * 86_400), windowDurationMins: 10_080)
+
+        let classified = probe.classifiedWindows(primary: weekly, secondary: nil, now: now)
+        #expect(classified.fiveHour == nil)
+        #expect(classified.weekly == weekly)
+    }
+
+    @Test
+    func classifiedWindowsFallsBackToPositionWithoutDurations() {
+        let probe = CodexProbe()
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let primary = CodexRateLimitWindow(usedPercent: 10, resetsAt: now.addingTimeInterval(3600))
+        let secondary = CodexRateLimitWindow(usedPercent: 20, resetsAt: now.addingTimeInterval(7200))
+
+        let classified = probe.classifiedWindows(primary: primary, secondary: secondary, now: now)
+        #expect(classified.fiveHour == primary)
+        #expect(classified.weekly == secondary)
+
+        // A reset more than 24h out proves a multi-day window even without a duration.
+        let longReset = CodexRateLimitWindow(usedPercent: 30, resetsAt: now.addingTimeInterval(3 * 86_400))
+        let solo = probe.classifiedWindows(primary: longReset, secondary: nil, now: now)
+        #expect(solo.fiveHour == nil)
+        #expect(solo.weekly == longReset)
     }
 
     @Test

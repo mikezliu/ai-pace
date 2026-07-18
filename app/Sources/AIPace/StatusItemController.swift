@@ -319,18 +319,20 @@ final class StatusItemController: NSObject, NSMenuDelegate, NSPopoverDelegate {
     }
 
     private func popoverHeight() -> CGFloat {
-        Self.popoverHeight(forVisibleSnapshotCount: store.visibleSnapshots.count)
+        Self.popoverHeight(forVisibleRowCounts: store.visibleSnapshots.map(\.visibleRowCount))
     }
 
-    static func popoverHeight(forVisibleSnapshotCount count: Int) -> CGFloat {
-        switch count {
-        case 0:
+    /// Height for one usage-bar row count per visible provider card. The
+    /// per-card row count varies: model-scoped weekly rows (e.g. Fable) add a
+    /// row, and windows a provider reports as nonexistent are hidden.
+    static func popoverHeight(forVisibleRowCounts rowCounts: [Int]) -> CGFloat {
+        guard !rowCounts.isEmpty else {
             return 220
-        case 1:
-            return 250
-        default:
-            return 380
         }
+        let cardsHeight = rowCounts.reduce(CGFloat(0)) { total, rows in
+            total + 42 + 44 * CGFloat(max(rows, 1))
+        }
+        return 120 + cardsHeight
     }
 
     static func statusItemLength(forContentWidth width: CGFloat) -> CGFloat {

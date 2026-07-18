@@ -69,12 +69,14 @@ final class UsageStore: ObservableObject {
     var menuBarTitle: String {
         let claudeName = ProviderDisplayName.displayName(for: .claude, userDefaults: userDefaults)
         let codexName = ProviderDisplayName.displayName(for: .codex, userDefaults: userDefaults)
-        return "\(claudeName) \(compactValue(for: claude.fiveHour))/\(compactValue(for: claude.weekly))  \(codexName) \(compactValue(for: codex.fiveHour))/\(compactValue(for: codex.weekly))"
+        let claudeText = StatusItemFormatter.text(prefix: claudeName, snapshot: claude, mode: .usage)
+        let codexText = StatusItemFormatter.text(prefix: codexName, snapshot: codex, mode: .usage)
+        return "\(claudeText)  \(codexText)"
     }
 
     var visibleSnapshots: [ProviderSnapshot] {
         [claude, codex].filter { snapshot in
-            if snapshot.fiveHour.usedPercentage != nil || snapshot.weekly.usedPercentage != nil {
+            if snapshot.hasUsageData {
                 return true
             }
             return agentStatus(for: snapshot.provider).availability.showsInPopover
@@ -163,13 +165,6 @@ final class UsageStore: ObservableObject {
         }
     }
 
-    private func compactValue(for window: UsageWindow) -> String {
-        guard let used = window.usedPercentage else {
-            return "--"
-        }
-        return String(Int(used.rounded()))
-    }
-
     func refreshNotificationsEnabled(for key: UsageWindowKey) -> Bool {
         refreshNotificationKeys.contains(key.storageKey)
     }
@@ -185,7 +180,7 @@ final class UsageStore: ObservableObject {
         // A spurious 429 on the usage endpoint (often "retry after 0s") would
         // otherwise force the menu bar to a misleading "0/<retry>" pill while the
         // popover keeps showing the preserved percentages. Keep the two consistent.
-        if snapshot.fiveHour.usedPercentage != nil || snapshot.weekly.usedPercentage != nil {
+        if snapshot.hasUsageData {
             return AgentStatus(provider: provider, availability: .available, message: nil)
         }
 
@@ -249,6 +244,16 @@ final class UsageStore: ObservableObject {
             previous: previous.fiveHour,
             current: current.fiveHour
         )
+        for currentWindow in current.modelWeeklies {
+            guard let previousWindow = previous.modelWeeklies.first(where: { $0.scopeLabel == currentWindow.scopeLabel }) else {
+                continue
+            }
+            await notifyIfWindowRefreshed(
+                key: UsageWindowKey(provider: current.provider, kind: currentWindow.kind, scope: currentWindow.scopeLabel),
+                previous: previousWindow,
+                current: currentWindow
+            )
+        }
         await notifyIfWindowRefreshed(
             key: UsageWindowKey(provider: current.provider, kind: .weekly),
             previous: previous.weekly,
@@ -316,13 +321,11 @@ final class UsageStore: ObservableObject {
         current: ProviderSnapshot,
         preservedFailureCount: Int
     ) -> Bool {
-        let hasCurrentData = current.fiveHour.usedPercentage != nil || current.weekly.usedPercentage != nil
-        guard !hasCurrentData else {
+        guard !current.hasUsageData else {
             return false
         }
 
-        let hadPreviousData = previous.fiveHour.usedPercentage != nil || previous.weekly.usedPercentage != nil
-        guard hadPreviousData else {
+        guard previous.hasUsageData else {
             return false
         }
 

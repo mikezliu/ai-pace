@@ -4,15 +4,18 @@ struct ClaudeProbe: Sendable {
     private let credentialLoader: ClaudeCredentialLoader
     private let accountInfoResolver: ClaudeAccountInfoResolver
     private let apiClient: ClaudeAPIClient
+    private let transientRateLimitRetryDelay: Duration
 
     init(
         credentialLoader: ClaudeCredentialLoader = ClaudeCredentialLoader(),
         accountInfoResolver: ClaudeAccountInfoResolver = ClaudeAccountInfoResolver(),
-        apiClient: ClaudeAPIClient = ClaudeAPIClient()
+        apiClient: ClaudeAPIClient = ClaudeAPIClient(),
+        transientRateLimitRetryDelay: Duration = .seconds(2)
     ) {
         self.credentialLoader = credentialLoader
         self.accountInfoResolver = accountInfoResolver
         self.apiClient = apiClient
+        self.transientRateLimitRetryDelay = transientRateLimitRetryDelay
     }
 
     func fetch() async -> ProviderSnapshot {
@@ -42,13 +45,13 @@ struct ClaudeProbe: Sendable {
 
             let usage: ClaudeUsageResponse
             do {
-                usage = try await apiClient.fetchUsage(credentials.oauth.accessToken)
+                usage = try await fetchUsageRetryingTransientRateLimit(with: credentials.oauth.accessToken)
             } catch let error as ProcessRunnerError {
                 if shouldRetryAfterAuthenticationError(error),
                    credentials.source.supportsRefresh,
                    credentials.oauth.refreshToken != nil {
                     credentials = try await apiClient.refreshToken(credentials, credentialLoader)
-                    usage = try await apiClient.fetchUsage(credentials.oauth.accessToken)
+                    usage = try await fetchUsageRetryingTransientRateLimit(with: credentials.oauth.accessToken)
                 } else {
                     throw error
                 }
@@ -59,13 +62,16 @@ struct ClaudeProbe: Sendable {
                     kind: .fiveHour,
                     usedPercentage: usage.fiveHour?.utilization,
                     resetsAt: parseISODate(usage.fiveHour?.resetsAt),
-                    message: usage.fiveHour == nil ? "No 5h limit returned." : nil
+                    message: usage.fiveHour == nil ? "No 5h limit returned." : nil,
+                    isAbsent: usage.fiveHour == nil
                 ),
+                modelWeeklies: modelWeeklyWindows(from: usage),
                 weekly: UsageWindow(
                     kind: .weekly,
                     usedPercentage: usage.sevenDay?.utilization,
                     resetsAt: parseISODate(usage.sevenDay?.resetsAt),
-                    message: usage.sevenDay == nil ? "No weekly limit returned." : nil
+                    message: usage.sevenDay == nil ? "No weekly limit returned." : nil,
+                    isAbsent: usage.sevenDay == nil
                 ),
                 detail: detailText(from: credentials, accountInfo: accountInfo)
             )
@@ -177,6 +183,63 @@ struct ClaudeProbe: Sendable {
         }
     }
 
+    /// Fetches usage, retrying once after a short pause when the endpoint
+    /// returns a burst 429 that invites an immediate retry ("Retry after 0s"
+    /// or no retry hint at all). Without this, a fresh launch during a burst
+    /// has no previous snapshot to preserve, so the menu bar sits on a
+    /// rate-limit pill for a whole refresh cycle.
+    func fetchUsageRetryingTransientRateLimit(with accessToken: String) async throws -> ClaudeUsageResponse {
+        do {
+            return try await apiClient.fetchUsage(accessToken)
+        } catch let error as ProcessRunnerError {
+            guard isImmediatelyRetryableRateLimit(error) else {
+                throw error
+            }
+            try? await Task.sleep(for: transientRateLimitRetryDelay)
+            return try await apiClient.fetchUsage(accessToken)
+        }
+    }
+
+    func isImmediatelyRetryableRateLimit(_ error: ProcessRunnerError) -> Bool {
+        guard case .invalidResponse(let message) = error else {
+            return false
+        }
+        let normalized = message.lowercased()
+        guard normalized.contains("http 429") else {
+            return false
+        }
+        guard let retryRange = normalized.range(of: "retry after ") else {
+            // No server hint; treat the burst as immediately retryable.
+            return true
+        }
+        let digits = normalized[retryRange.upperBound...].prefix(while: \.isNumber)
+        return Int(digits) == 0
+    }
+
+    /// Model-scoped weekly limits (e.g. the separate Fable weekly cap) from the
+    /// `limits` array, which the usage endpoint reports alongside the legacy
+    /// `five_hour` / `seven_day` fields.
+    func modelWeeklyWindows(from usage: ClaudeUsageResponse) -> [UsageWindow] {
+        (usage.limits ?? []).compactMap { entry in
+            guard entry.kind == "weekly_scoped",
+                  let model = entry.scope?.model,
+                  let percent = entry.percent else {
+                return nil
+            }
+            let label = (model.displayName ?? model.id)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let label, !label.isEmpty else {
+                return nil
+            }
+            return UsageWindow(
+                kind: .weekly,
+                usedPercentage: percent,
+                resetsAt: parseISODate(entry.resetsAt),
+                message: nil,
+                scopeLabel: label
+            )
+        }
+    }
+
     func parseISODate(_ isoString: String?) -> Date? {
         guard let isoString else {
             return nil
@@ -244,10 +307,12 @@ struct ClaudeAuthStatus: Decodable, Sendable {
 struct ClaudeUsageResponse: Decodable, Sendable {
     let fiveHour: ClaudeQuotaData?
     let sevenDay: ClaudeQuotaData?
+    var limits: [ClaudeLimitEntry]? = nil
 
     enum CodingKeys: String, CodingKey {
         case fiveHour = "five_hour"
         case sevenDay = "seven_day"
+        case limits
     }
 }
 
@@ -258,6 +323,34 @@ struct ClaudeQuotaData: Decodable, Sendable {
     enum CodingKeys: String, CodingKey {
         case utilization
         case resetsAt = "resets_at"
+    }
+}
+
+struct ClaudeLimitEntry: Decodable, Sendable {
+    let kind: String?
+    let percent: Double?
+    let resetsAt: String?
+    let scope: ClaudeLimitScope?
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case percent
+        case resetsAt = "resets_at"
+        case scope
+    }
+}
+
+struct ClaudeLimitScope: Decodable, Sendable {
+    let model: ClaudeLimitScopeModel?
+}
+
+struct ClaudeLimitScopeModel: Decodable, Sendable {
+    let id: String?
+    let displayName: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case displayName = "display_name"
     }
 }
 

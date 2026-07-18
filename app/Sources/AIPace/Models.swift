@@ -59,7 +59,21 @@ enum AgentAvailability: Equatable {
     case notLoggedIn
     case error(String)
 
+    /// Whether the provider's card stays visible in the popover. Rate limiting
+    /// is transient and self-heals, so its card stays (showing a short status)
+    /// instead of vanishing — auth/install problems point to Settings instead.
     var showsInPopover: Bool {
+        switch self {
+        case .loading, .available, .rateLimited:
+            return true
+        case .missingAuth, .accessDenied, .sessionExpired, .notInstalled, .notLoggedIn, .error:
+            return false
+        }
+    }
+
+    /// Whether the menu bar should render usage numbers for this state, as
+    /// opposed to a short status label like "Wait" or "Login".
+    var showsUsageText: Bool {
         switch self {
         case .loading, .available:
             return true
@@ -170,9 +184,21 @@ enum LaunchAtStartupState: Equatable {
 struct UsageWindowKey: Hashable, Sendable {
     let provider: ProviderKind
     let kind: UsageWindowKind
+    var scope: String? = nil
 
     var storageKey: String {
-        "\(provider.rawValue.lowercased())-\(kind.rawValue.lowercased())"
+        let base = "\(provider.rawValue.lowercased())-\(kind.rawValue.lowercased())"
+        guard let scope else {
+            return base
+        }
+        let slug = scope.lowercased().replacingOccurrences(of: " ", with: "-")
+        return "\(base)-\(slug)"
+    }
+
+    /// Label used in notification text: the scope (e.g. a model name like
+    /// "Fable") when present, otherwise the window kind ("5h" / "Week").
+    var displayLabel: String {
+        scope ?? kind.rawValue
     }
 }
 
@@ -181,8 +207,19 @@ struct UsageWindow: Identifiable {
     var usedPercentage: Double?
     var resetsAt: Date?
     var message: String?
+    /// Model name for a model-scoped weekly limit (e.g. "Fable"); nil for the
+    /// plain 5h / weekly windows. Used as the row label and notification key.
+    var scopeLabel: String? = nil
+    /// True when the provider affirmatively reported that this limit does not
+    /// exist for the account (as opposed to an error), so the row can be hidden.
+    var isAbsent: Bool = false
 
-    var id: String { kind.rawValue }
+    var id: String {
+        guard let scopeLabel else {
+            return kind.rawValue
+        }
+        return "\(kind.rawValue)-\(scopeLabel)"
+    }
 
     static func placeholder(_ kind: UsageWindowKind, message: String = "Loading…") -> UsageWindow {
         UsageWindow(kind: kind, usedPercentage: nil, resetsAt: nil, message: message)
@@ -192,6 +229,9 @@ struct UsageWindow: Identifiable {
 struct ProviderSnapshot {
     let provider: ProviderKind
     var fiveHour: UsageWindow
+    /// Model-scoped weekly windows (e.g. the separate Fable weekly limit),
+    /// displayed between the 5h and weekly rows.
+    var modelWeeklies: [UsageWindow] = []
     var weekly: UsageWindow
     var detail: String?
 
@@ -204,11 +244,23 @@ struct ProviderSnapshot {
         )
     }
 
-    /// Lowest "usage remaining" (100 − used) across the 5h and weekly windows
-    /// that have data, or nil when neither has a usage value yet. Drives the
-    /// Dynamic theme's severity.
+    var hasUsageData: Bool {
+        fiveHour.usedPercentage != nil
+            || weekly.usedPercentage != nil
+            || modelWeeklies.contains { $0.usedPercentage != nil }
+    }
+
+    /// Number of usage rows the popover renders for this snapshot: the 5h and
+    /// weekly rows unless reported absent, plus any model-scoped weekly rows.
+    var visibleRowCount: Int {
+        [fiveHour, weekly].filter { !$0.isAbsent }.count + modelWeeklies.count
+    }
+
+    /// Lowest "usage remaining" (100 − used) across the 5h, weekly, and
+    /// model-scoped weekly windows that have data, or nil when none has a usage
+    /// value yet. Drives the Dynamic theme's severity.
     var lowestRemaining: Double? {
-        [fiveHour, weekly]
+        ([fiveHour, weekly] + modelWeeklies)
             .compactMap { window in window.usedPercentage.map { max(0, 100 - $0) } }
             .min()
     }

@@ -5,9 +5,18 @@ func makeWindow(
     _ kind: UsageWindowKind,
     used: Double? = nil,
     resetsAt: Date? = nil,
-    message: String? = nil
+    message: String? = nil,
+    scopeLabel: String? = nil,
+    isAbsent: Bool = false
 ) -> UsageWindow {
-    UsageWindow(kind: kind, usedPercentage: used, resetsAt: resetsAt, message: message)
+    UsageWindow(
+        kind: kind,
+        usedPercentage: used,
+        resetsAt: resetsAt,
+        message: message,
+        scopeLabel: scopeLabel,
+        isAbsent: isAbsent
+    )
 }
 
 func makeSnapshot(
@@ -18,12 +27,16 @@ func makeSnapshot(
     weeklyReset: Date? = nil,
     fiveHourMessage: String? = nil,
     weeklyMessage: String? = nil,
+    fiveHourAbsent: Bool = false,
+    weeklyAbsent: Bool = false,
+    modelWeeklies: [UsageWindow] = [],
     detail: String? = nil
 ) -> ProviderSnapshot {
     ProviderSnapshot(
         provider: provider,
-        fiveHour: makeWindow(.fiveHour, used: fiveHourUsed, resetsAt: fiveHourReset, message: fiveHourMessage),
-        weekly: makeWindow(.weekly, used: weeklyUsed, resetsAt: weeklyReset, message: weeklyMessage),
+        fiveHour: makeWindow(.fiveHour, used: fiveHourUsed, resetsAt: fiveHourReset, message: fiveHourMessage, isAbsent: fiveHourAbsent),
+        modelWeeklies: modelWeeklies,
+        weekly: makeWindow(.weekly, used: weeklyUsed, resetsAt: weeklyReset, message: weeklyMessage, isAbsent: weeklyAbsent),
         detail: detail
     )
 }

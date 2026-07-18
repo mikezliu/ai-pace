@@ -4,19 +4,22 @@ struct CodexProbe: Sendable {
     func fetch() async -> ProviderSnapshot {
         do {
             let limits = try await fetchRateLimits()
+            let windows = classifiedWindows(primary: limits.primary, secondary: limits.secondary)
             return ProviderSnapshot(
                 provider: .codex,
                 fiveHour: UsageWindow(
                     kind: .fiveHour,
-                    usedPercentage: limits.primary?.usedPercent,
-                    resetsAt: limits.primary?.resetsAt,
-                    message: limits.primary == nil ? "No 5h limit returned." : nil
+                    usedPercentage: windows.fiveHour?.usedPercent,
+                    resetsAt: windows.fiveHour?.resetsAt,
+                    message: windows.fiveHour == nil ? "No 5h limit returned." : nil,
+                    isAbsent: windows.fiveHour == nil
                 ),
                 weekly: UsageWindow(
                     kind: .weekly,
-                    usedPercentage: limits.secondary?.usedPercent,
-                    resetsAt: limits.secondary?.resetsAt,
-                    message: limits.secondary == nil ? "No weekly limit returned." : nil
+                    usedPercentage: windows.weekly?.usedPercent,
+                    resetsAt: windows.weekly?.resetsAt,
+                    message: windows.weekly == nil ? "No weekly limit returned." : nil,
+                    isAbsent: windows.weekly == nil
                 ),
                 detail: limits.planType.map { "Plan: \($0)" }
             )
@@ -110,7 +113,49 @@ struct CodexProbe: Sendable {
             return nil
         }
         let resetsAt = numericValue(window["resetsAt"]).map(Date.init(timeIntervalSince1970:))
-        return CodexRateLimitWindow(usedPercent: usedPercent, resetsAt: resetsAt)
+        return CodexRateLimitWindow(
+            usedPercent: usedPercent,
+            resetsAt: resetsAt,
+            windowDurationMins: numericValue(window["windowDurationMins"])
+        )
+    }
+
+    /// Sorts the primary/secondary windows into the 5h and weekly slots by
+    /// their actual duration. Some plans (e.g. prolite) return a single
+    /// `primary` window that is a 7-day window, so position alone is not a
+    /// reliable signal.
+    func classifiedWindows(
+        primary: CodexRateLimitWindow?,
+        secondary: CodexRateLimitWindow?,
+        now: Date = .now
+    ) -> (fiveHour: CodexRateLimitWindow?, weekly: CodexRateLimitWindow?) {
+        var fiveHour: CodexRateLimitWindow?
+        var weekly: CodexRateLimitWindow?
+
+        // When a window's duration is unknown, fall back to its historical
+        // position: primary was the 5h window, secondary the weekly one.
+        let candidates: [(window: CodexRateLimitWindow?, prefersWeekly: Bool)] = [
+            (primary, false),
+            (secondary, true),
+        ]
+        for (window, prefersWeekly) in candidates {
+            guard let window else {
+                continue
+            }
+            switch window.span(now: now) {
+            case .short:
+                if fiveHour == nil { fiveHour = window }
+            case .long:
+                if weekly == nil { weekly = window }
+            case .unknown:
+                if prefersWeekly {
+                    if weekly == nil { weekly = window } else if fiveHour == nil { fiveHour = window }
+                } else {
+                    if fiveHour == nil { fiveHour = window } else if weekly == nil { weekly = window }
+                }
+            }
+        }
+        return (fiveHour, weekly)
     }
 
     func numericValue(_ value: Any?) -> Double? {
@@ -138,6 +183,27 @@ struct CodexRateLimits {
 struct CodexRateLimitWindow: Sendable, Equatable {
     let usedPercent: Double
     let resetsAt: Date?
+    var windowDurationMins: Double? = nil
+
+    enum Span {
+        case short
+        case long
+        case unknown
+    }
+
+    /// Whether this is a short (≤ 24h, i.e. the "5h"-style session window) or
+    /// long (multi-day, i.e. weekly) window. Without an explicit duration, a
+    /// reset more than 24h away still proves the window spans multiple days —
+    /// a window can never have more time left than its total duration.
+    func span(now: Date) -> Span {
+        if let windowDurationMins {
+            return windowDurationMins > 24 * 60 ? .long : .short
+        }
+        if let resetsAt, resetsAt.timeIntervalSince(now) > 24 * 60 * 60 {
+            return .long
+        }
+        return .unknown
+    }
 }
 
 func writeJSONLine(_ object: [String: Any], to handle: FileHandle) throws {

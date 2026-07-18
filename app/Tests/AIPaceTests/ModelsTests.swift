@@ -32,10 +32,15 @@ struct ModelsTests {
         #expect(DynamicTheme.pillStyle(forRemaining: 15, isDark: false).foreground == Color.black)
         #expect(DynamicTheme.pillStyle(forRemaining: 25, isDark: false).background == DynamicTheme.cautionBackground)
 
-        // lowestRemaining is the smaller of the two windows' (100 - used).
+        // lowestRemaining is the smallest (100 - used) across all windows,
+        // including model-scoped weeklies, so a nearly-exhausted Fable limit
+        // escalates the pill even when the shared windows are healthy.
         #expect(makeSnapshot(.claude, fiveHourUsed: 75, weeklyUsed: 40).lowestRemaining == 25)
         #expect(makeSnapshot(.claude, fiveHourUsed: 95).lowestRemaining == 5)
         #expect(makeSnapshot(.claude).lowestRemaining == nil)
+        let fable = makeWindow(.weekly, used: 92, scopeLabel: "Fable")
+        #expect(makeSnapshot(.claude, fiveHourUsed: 40, weeklyUsed: 40, modelWeeklies: [fable]).lowestRemaining == 8)
+        #expect(makeSnapshot(.claude, modelWeeklies: [fable]).lowestRemaining == 8)
     }
 
     @Test
@@ -59,17 +64,47 @@ struct ModelsTests {
     @Test
     func usageWindowKeyBuildsStableStorageKey() {
         let key = UsageWindowKey(provider: .codex, kind: .weekly)
-
         #expect(key.storageKey == "codex-week")
+        #expect(key.displayLabel == "Week")
+
+        let scopedKey = UsageWindowKey(provider: .claude, kind: .weekly, scope: "Fable")
+        #expect(scopedKey.storageKey == "claude-week-fable")
+        #expect(scopedKey.displayLabel == "Fable")
+    }
+
+    @Test
+    func snapshotRowCountAndUsageDataCoverModelWeekliesAndAbsentWindows() {
+        let fable = makeWindow(.weekly, used: 74, scopeLabel: "Fable")
+
+        let withFable = makeSnapshot(.claude, fiveHourUsed: 10, weeklyUsed: 20, modelWeeklies: [fable])
+        #expect(withFable.visibleRowCount == 3)
+        #expect(withFable.hasUsageData)
+
+        let weeklyOnly = makeSnapshot(.codex, weeklyUsed: 68, fiveHourAbsent: true)
+        #expect(weeklyOnly.visibleRowCount == 1)
+        #expect(weeklyOnly.hasUsageData)
+
+        let scopedDataOnly = makeSnapshot(.claude, modelWeeklies: [fable])
+        #expect(scopedDataOnly.hasUsageData)
+        #expect(!makeSnapshot(.claude).hasUsageData)
+
+        // Scoped windows get a distinct identity so SwiftUI rows don't collide.
+        #expect(fable.id != makeWindow(.weekly, used: 20).id)
     }
 
     @Test
     func agentAvailabilityPopoverVisibilityMatchesExpectedStates() {
         #expect(AgentAvailability.loading.showsInPopover)
         #expect(AgentAvailability.available.showsInPopover)
-        #expect(!AgentAvailability.rateLimited.showsInPopover)
+        // Rate limiting is transient: the card stays visible in the popover,
+        // but the menu bar still shows the "Wait" pill, not usage numbers.
+        #expect(AgentAvailability.rateLimited.showsInPopover)
+        #expect(!AgentAvailability.rateLimited.showsUsageText)
         #expect(!AgentAvailability.notInstalled.showsInPopover)
         #expect(!AgentAvailability.error("boom").showsInPopover)
+        #expect(AgentAvailability.loading.showsUsageText)
+        #expect(AgentAvailability.available.showsUsageText)
+        #expect(!AgentAvailability.error("boom").showsUsageText)
     }
 
     @Test

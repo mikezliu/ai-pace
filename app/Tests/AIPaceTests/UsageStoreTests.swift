@@ -199,6 +199,9 @@ struct UsageStoreTests {
         )
 
         #expect(store.agentStatus(for: .claude).availability == .rateLimited)
+        // A fresh launch with no data to preserve keeps the card visible in the
+        // popover (rate limiting self-heals) instead of vanishing.
+        #expect(store.visibleSnapshots.contains { $0.provider == .claude })
     }
 
     @Test
@@ -231,6 +234,47 @@ struct UsageStoreTests {
 
         #expect(notificationManager.sentKeys == [key])
         #expect(notificationManager.sentSounds == [.systemDefault])
+    }
+
+    @Test
+    @MainActor
+    func refreshSendsNotificationWhenModelScopedWindowResets() async {
+        let suiteName = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let key = UsageWindowKey(provider: .claude, kind: .weekly, scope: "Fable")
+        defaults.set([key.storageKey], forKey: "refreshNotificationKeys")
+
+        let previousReset = Date(timeIntervalSince1970: 1_000)
+        let currentReset = previousReset.addingTimeInterval(600)
+        let notificationManager = NotificationManagerSpy()
+        let store = UsageStore(
+            claudeProbe: ProbeStub(queue: ProbeQueue([
+                makeSnapshot(
+                    .claude,
+                    fiveHourUsed: 5,
+                    weeklyUsed: 25,
+                    modelWeeklies: [makeWindow(.weekly, used: 3, resetsAt: currentReset, scopeLabel: "Fable")]
+                ),
+            ])),
+            codexProbe: ProbeStub(queue: ProbeQueue([
+                makeSnapshot(.codex, fiveHourUsed: 10, weeklyUsed: 20),
+            ])),
+            notificationManager: notificationManager,
+            userDefaults: defaults,
+            startRefreshLoop: false
+        )
+        store.claude = makeSnapshot(
+            .claude,
+            fiveHourUsed: 5,
+            weeklyUsed: 25,
+            modelWeeklies: [makeWindow(.weekly, used: 88, resetsAt: previousReset, scopeLabel: "Fable")]
+        )
+
+        await store.refresh()
+
+        #expect(notificationManager.sentKeys == [key])
     }
 
     @Test

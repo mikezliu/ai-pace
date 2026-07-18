@@ -201,9 +201,16 @@ private struct ProviderCard: View {
                 }
             }
 
-            // Usage rows
-            UsageRow(window: snapshot.fiveHour, provider: snapshot.provider, store: store, accent: accent, lang: lang)
-            UsageRow(window: snapshot.weekly, provider: snapshot.provider, store: store, accent: accent, lang: lang)
+            // Usage rows (windows the provider reports as nonexistent are hidden)
+            if !snapshot.fiveHour.isAbsent {
+                UsageRow(window: snapshot.fiveHour, provider: snapshot.provider, store: store, accent: accent, lang: lang)
+            }
+            ForEach(snapshot.modelWeeklies) { window in
+                UsageRow(window: window, provider: snapshot.provider, store: store, accent: accent, lang: lang)
+            }
+            if !snapshot.weekly.isAbsent {
+                UsageRow(window: snapshot.weekly, provider: snapshot.provider, store: store, accent: accent, lang: lang)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
@@ -245,7 +252,7 @@ private struct UsageRow: View {
     let lang: AppLanguage
     @AppStorage("popoverDisplayMode") private var popoverDisplayModeID = PopoverDisplayMode.usage.rawValue
 
-    private var key: UsageWindowKey { UsageWindowKey(provider: provider, kind: window.kind) }
+    private var key: UsageWindowKey { UsageWindowKey(provider: provider, kind: window.kind, scope: window.scopeLabel) }
     private var notifyEnabled: Bool { store.refreshNotificationsEnabled(for: key) }
     private var notificationsDisabledInSystem: Bool { store.notificationsDisabledInSystem }
     private var loc: Loc { Loc(lang: lang) }
@@ -275,7 +282,7 @@ private struct UsageRow: View {
                 .pointerOnHover()
                 .padding(.leading, 4)
 
-                Text(loc.windowLabel(window.kind))
+                Text(window.scopeLabel ?? loc.windowLabel(window.kind))
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(.secondary)
 

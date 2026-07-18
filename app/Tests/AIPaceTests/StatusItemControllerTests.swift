@@ -7,11 +7,16 @@ import Testing
 struct StatusItemControllerTests {
     @Test
     @MainActor
-    func popoverHeightBucketsMatchVisibleAgentCounts() {
-        #expect(StatusItemController.popoverHeight(forVisibleSnapshotCount: 0) == 220)
-        #expect(StatusItemController.popoverHeight(forVisibleSnapshotCount: 1) == 250)
-        #expect(StatusItemController.popoverHeight(forVisibleSnapshotCount: 2) == 380)
-        #expect(StatusItemController.popoverHeight(forVisibleSnapshotCount: 5) == 380)
+    func popoverHeightGrowsWithVisibleRows() {
+        // Legacy shapes keep their original heights.
+        #expect(StatusItemController.popoverHeight(forVisibleRowCounts: []) == 220)
+        #expect(StatusItemController.popoverHeight(forVisibleRowCounts: [2]) == 250)
+        #expect(StatusItemController.popoverHeight(forVisibleRowCounts: [2, 2]) == 380)
+
+        // A model-scoped weekly row adds one row; an absent 5h window removes one.
+        #expect(StatusItemController.popoverHeight(forVisibleRowCounts: [3, 2]) == 424)
+        #expect(StatusItemController.popoverHeight(forVisibleRowCounts: [3, 1]) == 380)
+        #expect(StatusItemController.popoverHeight(forVisibleRowCounts: [0]) == StatusItemController.popoverHeight(forVisibleRowCounts: [1]))
     }
 
     @Test
