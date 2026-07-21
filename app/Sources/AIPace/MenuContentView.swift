@@ -175,7 +175,7 @@ private struct ProviderCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            let insight = WeeklyPacingInsight(window: snapshot.weekly, lang: lang)
+            let insight = WeeklyPacingInsight(window: snapshot.weekly, modelWeeklies: snapshot.modelWeeklies, lang: lang)
 
             // Provider header
             HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -227,12 +227,19 @@ private struct WeeklyPacingInsight {
     let message: String
     let color: Color
 
-    init?(window: UsageWindow, lang: AppLanguage, now: Date = .now) {
+    init?(window: UsageWindow, modelWeeklies: [UsageWindow] = [], lang: AppLanguage, now: Date = .now) {
         guard let delta = WeeklyPacing.delta(for: window, now: now) else {
             return nil
         }
 
-        message = Loc(lang: lang).insightMessage(delta: delta)
+        let loc = Loc(lang: lang)
+        var text = loc.insightMessage(delta: delta)
+        for scoped in modelWeeklies {
+            if let scopedDelta = WeeklyPacing.delta(for: scoped, now: now) {
+                text += " (\(loc.insightMessage(delta: scopedDelta)))"
+            }
+        }
+        message = text
 
         switch delta {
         case ..<(-5): color = .orange
